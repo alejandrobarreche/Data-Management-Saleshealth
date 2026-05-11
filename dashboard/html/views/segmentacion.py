@@ -159,6 +159,30 @@ def _donut_variance(pca_explained: list[float]) -> go.Figure:
     return fig
 
 
+def _loadings_heatmap(loadings: np.ndarray, feature_cols: list[str]) -> go.Figure:
+    """Heatmap 8×2 de cargas factoriales — Carga = vᵢⱼ · √λⱼ.
+
+    Las cargas leen qué variable pesa en cada componente. Color rojo/azul:
+    correlación positiva/negativa entre la feature y la componente.
+    """
+    labels_y = [FEATURE_LABELS.get(c, c) for c in feature_cols]
+    fig = go.Figure(go.Heatmap(
+        z=loadings, x=["PC1", "PC2"], y=labels_y,
+        colorscale="RdBu", zmid=0,
+        colorbar=dict(title="carga", thickness=10, len=0.8, tickfont=dict(size=10)),
+        hovertemplate="<b>%{y}</b><br>%{x}: %{z:.2f}<extra></extra>",
+        text=np.round(loadings, 2), texttemplate="%{text}",
+        textfont=dict(size=12, color=theme.INK),
+    ))
+    theme.apply_chart(fig, title=" ", height=360, hovermode="closest")
+    fig.update_layout(
+        xaxis=dict(side="top", tickfont=dict(size=13, color=theme.INK), tickangle=0),
+        yaxis=dict(tickfont=dict(size=12), autorange="reversed"),
+        margin=dict(l=10, r=80, t=40, b=20),
+    )
+    return fig
+
+
 def _z_heatmap(df: pd.DataFrame) -> go.Figure:
     means = df[FEATURE_COLS].mean()
     stds = df[FEATURE_COLS].std().replace(0, 1)
@@ -229,7 +253,13 @@ def _characterization_table(df: pd.DataFrame) -> str:
     )
 
 
-def render(segments: pd.DataFrame, pca_explained: list[float] | None = None) -> str:
+def render(
+    segments: pd.DataFrame,
+    pca_explained: list[float] | None = None,
+    *,
+    loadings: np.ndarray | None = None,
+    feature_cols: list[str] | None = None,
+) -> str:
     df = segments.copy()
     pca_explained = pca_explained or [0.0, 0.0]
     total_var = (pca_explained[0] + pca_explained[1]) if len(pca_explained) >= 2 else 0.0
@@ -246,6 +276,7 @@ def render(segments: pd.DataFrame, pca_explained: list[float] | None = None) -> 
             f"<strong>{var_str}&nbsp;%</strong>), KMeans con k = 3 y "
             "caracterización por cluster en heatmap z-score."
         ),
+        analytics=["diagnostic", "predictive"],
     ))
 
     parts.append(h.section_h("A", "Cluster overview", "click en una card para drill-down"))
@@ -265,6 +296,20 @@ def render(segments: pd.DataFrame, pca_explained: list[float] | None = None) -> 
                   h.explain("PC1 ≈ monetario + frecuencia; PC2 ≈ recencia − tasa devolución. "
                             "La posición de cada cliente en el plano resume las 8 features."),
     ))
+    # Heatmap de cargas factoriales — la "lectura" de qué significa cada eje.
+    # Sólo se renderiza si build.py pasa la matriz de cargas (pca.components_.T · √λ).
+    if loadings is not None and feature_cols is not None:
+        parts.append(h.card(
+            header="Cargas factoriales — qué significa cada eje",
+            meta="Carga = vᵢⱼ · √λⱼ",
+            body_html=h.fig_html(_loadings_heatmap(loadings, feature_cols), frame=False) +
+                      h.explain(
+                          "Cada celda es la correlación entre la feature y la componente. "
+                          "PC1 carga alto en Ingresos, CLTV y Frecuencia → eje «valor». "
+                          "PC2 carga alto en Devolución y Recencia → eje «fricción». "
+                          "Así se justifica por qué la separación geométrica del scatter de arriba "
+                          "tiene sentido de negocio."),
+        ))
     # Los dos donuts en su propia fila — leyendas no se aprietan
     parts.append(h.grid([
         h.card(header="Tamaño de cluster",

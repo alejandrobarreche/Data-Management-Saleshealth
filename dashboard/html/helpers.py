@@ -56,6 +56,15 @@ def hero(eyebrow: str, h1: str, sub: str) -> str:
     )
 
 
+_ANALYTICS_LABELS = {
+    "descriptive":  "Descriptiva",
+    "diagnostic":   "Diagnóstica",
+    "predictive":   "Predictiva",
+    "prescriptive": "Prescriptiva",
+    "methodology":  "Metodología",
+}
+
+
 def chapter_opener(
     *,
     marker: str | None = None,        # ej. "Capítulo II" o "§2"
@@ -63,18 +72,34 @@ def chapter_opener(
     headline: str,                    # HTML válido (no se escapa)
     headline_em: str | None = None,   # frase italic en azul al final
     deck: str,                        # HTML válido (puede llevar <strong>)
+    analytics: str | list[str] | None = None,   # chip(s) académicos
 ) -> str:
     """Cabecera editorial de una vista — análoga al opener general.
 
     headline y deck se inyectan como HTML; el llamador debe escaparlos si
     proceden de input externo. Para SalesHealth todo el contenido lo
     controla build.py y las vistas — no hay riesgo de inyección.
+
+    `analytics` encuadra la vista contra el temario de las 4 analíticas
+    (descriptive / diagnostic / predictive / prescriptive). Acepta una clave
+    o una lista — útil para capítulos que mezclan tipos.
     """
     marker_html = f'<div class="marker">{marker}</div>' if marker else ""
     em_html = f'<em>{headline_em}</em>' if headline_em else ""
+
+    analytics_html = ""
+    if analytics:
+        keys = [analytics] if isinstance(analytics, str) else list(analytics)
+        chips = []
+        for k in keys:
+            label = _ANALYTICS_LABELS.get(k, k.capitalize())
+            chips.append(f'<span class="analytics-chip a-{k}">{_html.escape(label)}</span>')
+        analytics_html = f'<div class="analytics-chips">{"".join(chips)}</div>'
+
     return (
         '<header class="chapter-opener">'
         f'{marker_html}'
+        f'{analytics_html}'
         f'<p class="eyebrow">{eyebrow}</p>'
         f'<h1>{headline}{em_html}</h1>'
         f'<p class="deck">{deck}</p>'

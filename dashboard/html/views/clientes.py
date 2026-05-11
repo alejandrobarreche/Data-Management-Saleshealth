@@ -121,6 +121,46 @@ def _violin_by_cluster(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _pareto_kpi(df: pd.DataFrame) -> str:
+    """Pareto explícito: cuántos clientes (y de qué cluster) concentran qué %
+    del CLTV total. Lee la curva de Lorenz en clave de negocio."""
+    sub = df[df["cltv"] > 0].copy()
+    n_total = len(sub)
+    cltv_total = float(sub["cltv"].sum())
+    if not n_total or not cltv_total:
+        return ""
+
+    # KPI 1 — Top 20 % canónico (regla de Pareto)
+    top20_n = max(1, int(round(0.20 * n_total)))
+    top20_cltv = float(sub.nlargest(top20_n, "cltv")["cltv"].sum())
+    top20_pct = top20_cltv / cltv_total
+
+    # KPI 2 — Cluster VIP (cluster 1) — concentración real del dataset
+    vip = sub[sub["cluster"] == 1] if "cluster" in sub else sub.iloc[0:0]
+    vip_n = len(vip)
+    vip_share = vip_n / n_total if n_total else 0
+    vip_cltv = float(vip["cltv"].sum())
+    vip_pct = vip_cltv / cltv_total if cltv_total else 0
+
+    cards = [
+        h.kpi_card(
+            "Top 20 % clientes",
+            f"{theme.fmt_num(top20_pct * 100, decimals=1)} %",
+            delta=f"{top20_n:,} clientes concentran este % del CLTV".replace(",", " "),
+            delta_dir="up", delta_label="Pareto canónico",
+            src="derived",
+        ),
+        h.kpi_card(
+            f"Cluster 1 (VIP) — {theme.fmt_num(vip_share * 100, decimals=1)} % de la base",
+            f"{theme.fmt_num(vip_pct * 100, decimals=1)} %",
+            delta=f"{vip_n:,} clientes generan este % del CLTV total".replace(",", " "),
+            delta_dir="up", delta_label="Pareto observado",
+            src="customer_segments",
+        ),
+    ]
+    return h.grid(cards, cols=2)
+
+
 def _lorenz(df: pd.DataFrame) -> tuple[go.Figure, float]:
     sub = df[df["cltv"] > 0]["cltv"].values
     if sub.size == 0:
@@ -237,6 +277,7 @@ def render(segments: pd.DataFrame) -> str:
             "registros: histograma logarítmico, ECDF, densidad por cluster, curva de Lorenz "
             "con coeficiente de Gini, y el top de la base."
         ),
+        analytics=["descriptive", "diagnostic"],
     ))
 
     parts.append(_kpis_block(df, df))
@@ -281,6 +322,12 @@ def render(segments: pd.DataFrame) -> str:
                body_html=h.fig_html(_mean_vs_median_per_cluster(df), frame=False) +
                          h.explain("Donde la media supera mucho a la mediana, la cola es la que manda. El Cluster 1 enseña la asimetría más fuerte.")),
     ], cols=2))
+    parts.append(_pareto_kpi(df))
+    parts.append(h.explain(
+        "Lectura accionable de la curva de arriba: el Gini = "
+        f"{gini:.3f} se traduce en estos dos números — el Top 20 % "
+        "canónico y la concentración real observada en el Cluster 1 (VIP)."
+    ))
 
     parts.append(h.section_h("D", "Top 20 clientes por CLTV", "cltv.parquet · ordenado desc"))
     parts.append(_top20_table(df))

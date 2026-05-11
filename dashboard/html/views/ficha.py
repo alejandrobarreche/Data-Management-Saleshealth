@@ -27,6 +27,7 @@ def render(segments: pd.DataFrame) -> str:
                 "Filtra por cluster, CLTV o frecuencia, y selecciona uno para ver su radar, "
                 "su comparativa con el cluster y el historial de compras desde el DWH."
             ),
+            analytics="diagnostic",
         ),
 
         # ── Search bar + filtros ──────────────────────────────────────────
@@ -297,7 +298,10 @@ def render(segments: pd.DataFrame) -> str:
                   <p class="explain">El radar usa rankings normalizados — la posición «hacia afuera» siempre significa mejor (incluida la recencia, invertida).</p>
                 </div>
                 <div class="card">
-                  <div class="card-h"><h3>Tabla comparativa</h3></div>
+                  <div class="card-h">
+                    <h3>Perfil RFM extendido</h3>
+                    <div class="meta">Recency · Frequency · Monetary + margen, retención, devolución</div>
+                  </div>
                   ${cmpHtml}
                 </div>
               </div>

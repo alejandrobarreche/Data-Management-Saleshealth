@@ -22,6 +22,8 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import davies_bouldin_score, silhouette_score
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -59,10 +61,35 @@ def _load_artifacts() -> dict:
     X = seg[FEATURE_COLS].astype(float).fillna(0).to_numpy()
     Xs = scaler.transform(X)
     Xp = pca.transform(Xs)
-    elbow = {k: float(KMeans(n_clusters=k, n_init=10, random_state=42).fit(Xp).inertia_)
-             for k in range(2, 9)}
 
-    return {"cltv": cltv, "cm": cm, "seg": seg, "pca_explained": pca_explained, "elbow": elbow}
+    # Cargas factoriales 8×2 (loadings = v · √λ) — usadas en el biplot de Segmentación
+    loadings = (pca.components_.T * np.sqrt(pca.explained_variance_))  # shape (8, 2)
+
+    # Métricas k=2..8: inertia + silhouette + Davies–Bouldin (sobre el espacio PCA reducido)
+    elbow: dict[int, float] = {}
+    silhouette: dict[int, float] = {}
+    davies_bouldin: dict[int, float] = {}
+    for k in range(2, 9):
+        km = KMeans(n_clusters=k, n_init=10, random_state=42).fit(Xp)
+        elbow[k] = float(km.inertia_)
+        silhouette[k] = float(silhouette_score(Xp, km.labels_))
+        davies_bouldin[k] = float(davies_bouldin_score(Xp, km.labels_))
+
+    # PCA completo (n=8) para la regla de Kaiser — autovalores de las 8 componentes
+    pca_full = PCA(n_components=len(FEATURE_COLS), random_state=42).fit(Xs)
+    pca_full_eigenvalues = list(map(float, pca_full.explained_variance_))
+    pca_full_ratio = list(map(float, pca_full.explained_variance_ratio_))
+
+    return {
+        "cltv": cltv, "cm": cm, "seg": seg,
+        "pca_explained": pca_explained,
+        "elbow": elbow,
+        "silhouette": silhouette,
+        "davies_bouldin": davies_bouldin,
+        "loadings": loadings,
+        "pca_full_eigenvalues": pca_full_eigenvalues,
+        "pca_full_ratio": pca_full_ratio,
+    }
 
 
 HTML_TEMPLATE = """<!doctype html>
@@ -388,6 +415,11 @@ def main() -> None:
     cltv, cm, seg = art["cltv"], art["cm"], art["seg"]
     pca_explained = art["pca_explained"]
     elbow = art["elbow"]
+    silhouette = art["silhouette"]
+    davies_bouldin = art["davies_bouldin"]
+    loadings = art["loadings"]
+    pca_full_eigenvalues = art["pca_full_eigenvalues"]
+    pca_full_ratio = art["pca_full_ratio"]
 
     # asegura que segments tiene aov / margin_rate (algunos parquets podrían no tenerlo)
     if "aov" not in seg.columns and "frequency" in seg.columns:
@@ -422,10 +454,19 @@ def main() -> None:
     views_html = "\n".join([
         overview_html,
         views.render_clientes(segments=seg),
-        views.render_segmentacion(segments=seg, pca_explained=pca_explained),
+        views.render_segmentacion(
+            segments=seg, pca_explained=pca_explained,
+            loadings=loadings, feature_cols=FEATURE_COLS,
+        ),
         productos_html,
         views.render_ficha(segments=seg),
-        views.render_metodologia(segments=seg, pca_explained=pca_explained, elbow=elbow),
+        views.render_metodologia(
+            segments=seg, pca_explained=pca_explained, elbow=elbow,
+            silhouette=silhouette, davies_bouldin=davies_bouldin,
+            pca_full_eigenvalues=pca_full_eigenvalues,
+            pca_full_ratio=pca_full_ratio,
+            feature_cols=FEATURE_COLS,
+        ),
     ])
 
     period = (

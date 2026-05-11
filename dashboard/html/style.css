@@ -563,6 +563,32 @@ hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
     .chapter-opener .deck { font-size: 14px; }
 }
 
+/* Chip académico — encuadra la vista contra las 4 analíticas */
+.chapter-opener .analytics-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-bottom: 8px;
+}
+.analytics-chip {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 2px 9px;
+    border-radius: var(--radius-pill);
+    border: 1px solid;
+    font-weight: 600;
+}
+.analytics-chip.a-descriptive  { color: #1E40AF; border-color: #BFDBFE; background: #EFF6FF; }
+.analytics-chip.a-diagnostic   { color: #0F766E; border-color: #A7E5E5; background: #ECFEFF; }
+.analytics-chip.a-predictive   { color: #6D28D9; border-color: #DDD6FE; background: #F5F3FF; }
+.analytics-chip.a-prescriptive { color: #B45309; border-color: #FDE68A; background: #FFFBEB; }
+.analytics-chip.a-methodology  { color: #475569; border-color: #CBD5E1; background: #F8FAFC; }
+
 
 /* ── NEW · Lede (entradilla en serif para introducir un gráfico) ────────── */
 .lede {
@@ -2211,6 +2237,88 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
     color: var(--ink-muted);
     line-height: 1.5;
 }
+
+
+/* ── 5 C del dato ──────────────────────────────────────────────────────── */
+.fivec-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+}
+.fivec-card {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 10px 12px;
+    padding: 12px 14px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+}
+.fivec-letter {
+    grid-row: 1 / span 2;
+    align-self: start;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 26px;
+    line-height: 1;
+    color: var(--primary);
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.fivec-head { display: flex; flex-direction: column; gap: 1px; }
+.fivec-name {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-muted);
+    font-weight: 600;
+}
+.fivec-es {
+    font-family: var(--font-text);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+}
+.fivec-body {
+    grid-column: 1 / -1;
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-muted);
+}
+.fivec-body code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    background: rgba(37, 99, 235, 0.08);
+    color: var(--ink);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+
+/* Kaiser chip — conservar / descartar dentro de la tabla de autovalores */
+.kaiser-chip {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    border: 1px solid;
+    font-weight: 600;
+}
+.kaiser-chip.kaiser-keep { color: #166534; border-color: #BBF7D0; background: #F0FDF4; }
+.kaiser-chip.kaiser-drop { color: #6B7280; border-color: #E5E7EB; background: #F9FAFB; }
+.tbl tr.kaiser-best-row td { background: #F0F9FF; font-weight: 600; }
 
 
 /* ── Limitations list ───────────────────────────────────────────────────── */

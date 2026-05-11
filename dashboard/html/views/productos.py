@@ -277,6 +277,7 @@ def render(
                 "Vista íntegramente alimentada por Postgres — fuera de alcance en modo "
                 "OFFLINE. Cuando el DWH esté disponible, esta sección vuelve a la vida."
             ),
+            analytics="descriptive",
         ))
         parts.append(h.offline_banner(
             "Modo OFFLINE — Esta vista no tiene contraparte en parquet (todos los breakdowns por SKU, "
@@ -300,6 +301,7 @@ def render(
             f"Ventana <strong>{period_str}</strong>. Top de ingresos, motivos de "
             "devolución (donut + barras) y los SKUs con peor relación devolución/venta."
         ),
+        analytics="descriptive",
     ))
 
     parts.append(_kpis(kpis or {}))

@@ -339,6 +339,7 @@ def render(
                 "Postgres no responde — series temporales y agregados por categoría/tienda "
                 "quedan fuera de alcance. KPIs derivados de los parquets a continuación."
             ),
+            analytics="descriptive",
         ))
         parts.append(h.offline_banner(
             "Modo OFFLINE — Postgres no disponible. KPIs y secciones de evolución (D–H) en placeholder honesto. "
@@ -370,6 +371,7 @@ def render(
             "inventario del DWH y series temporales — ritmo diario, mezcla por categoría, "
             "estacionalidad y top de tiendas."
         ),
+        analytics="descriptive",
     ))
 
     parts.append(h.section_h("A", "Indicadores del periodo", period_str))
