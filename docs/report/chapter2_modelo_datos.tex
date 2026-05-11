@@ -1,0 +1,219 @@
+\chapter{Modelo de datos}
+\label{ch:modelo}
+
+Este capítulo documenta los dos modelos que coexisten en la misma base
+de datos PostgreSQL del proyecto: el modelo Entidad--Relación de los datos
+crudos en el esquema \texttt{public} y el modelo dimensional en estrella
+del esquema \texttt{dwh}. El esquema \texttt{staging}, intermedio, contiene
+copias limpiadas y tipadas y se describe en el capítulo~\ref{ch:etl}.
+
+\section{Modelo Entidad--Relación (\texttt{public})}
+
+El esquema \texttt{public} agrupa $17$ tablas crudas en cinco bloques
+funcionales (tabla~\ref{tab:bloques-er}). El diagrama completo aparece en
+la figura~\ref{fig:er}.
+
+\begin{table}[H]
+\centering
+\caption{Las $17$ tablas crudas de \texttt{public} agrupadas por bloque
+funcional.}
+\label{tab:bloques-er}
+\small
+\begin{tabular}{l p{9cm}}
+\toprule
+\textbf{Bloque} & \textbf{Tablas} \\
+\midrule
+Producto             & \texttt{product}, \texttt{central\_product},
+                       \texttt{category}, \texttt{brand},
+                       \texttt{product\_offer}, \texttt{offer} \\
+Almacén              & \texttt{warehouse}, \texttt{warehouse\_location},
+                       \texttt{central\_inventory}, \texttt{inventory} \\
+Tienda + geografía   & \texttt{store}, \texttt{city\_zone} (clave
+                       \texttt{postal\_code}) \\
+Cliente y ventas     & \texttt{customer}, \texttt{sale},
+                       \texttt{sale\_item} \\
+Devoluciones         & \texttt{return\_item}, \texttt{return\_reason} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Relaciones clave.}
+\begin{itemize}
+  \item \texttt{sale} \,1--N\, \texttt{sale\_item}: un ticket puede tener
+        varias líneas (la mediana del dataset es $\sim 2$ líneas por ticket).
+  \item \texttt{sale} \,N--1\, \texttt{customer}: cada ticket pertenece a
+        un cliente.
+  \item \texttt{sale} \,N--1\, \texttt{store}: cada ticket se emite desde
+        una tienda concreta.
+  \item \texttt{sale\_item} \,N--1\, \texttt{product}: cada línea se refiere
+        a un producto del catálogo.
+  \item \texttt{sale\_item} \,1--N\, \texttt{return\_item}: una línea
+        vendida puede generar cero o varias devoluciones parciales.
+  \item \texttt{store} \,N--1\, \texttt{city\_zone}: se enlaza por
+        \texttt{postal\_code}; \texttt{city\_zone} aporta atributos
+        territoriales (\texttt{district}, \texttt{area\_type},
+        \texttt{zone\_orientation}).
+  \item \texttt{central\_product} \,1--1\, \texttt{product}: la ficha
+        técnica centralizada está presente en $49$ de los $50$ productos;
+        cuando falta, se cae a los textos planos de \texttt{product}.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{er_diagram.png}
+  \caption[Diagrama Entidad--Relación del esquema \texttt{public}]{%
+    Diagrama Entidad--Relación del esquema \texttt{public}, generado a
+    partir de \texttt{docs/er\_diagram.md} mediante Graphviz. Los colores
+    distinguen los cinco bloques: producto (azul), tienda y geografía
+    (verde), almacén (violeta), cliente y ventas (rojo) y devoluciones
+    (ámbar).}
+  \label{fig:er}
+\end{figure}
+
+\section{Modelo dimensional (\texttt{dwh})}
+
+El esquema \texttt{dwh} sigue un patrón clásico en \emph{estrella}: una
+malla de seis dimensiones que rodea a dos tablas de hechos. La
+figura~\ref{fig:dim} muestra el diagrama y la
+tabla~\ref{tab:dimensiones-resumen} resume el grano y los atributos más
+relevantes de cada dimensión.
+
+\begin{table}[H]
+\centering
+\caption{Dimensiones del DWH: grano, clave de negocio y atributos
+destacados.}
+\label{tab:dimensiones-resumen}
+\small
+\begin{tabular}{l l p{7.5cm}}
+\toprule
+\textbf{Tabla} & \textbf{Clave de negocio} & \textbf{Atributos destacados} \\
+\midrule
+\texttt{dim\_date}          & \texttt{date\_id} (\texttt{yyyymmdd}) &
+  \texttt{full\_date, year, quarter, month, month\_name, day\_of\_week,
+  is\_weekend} \\
+\texttt{dim\_customer}      & \texttt{customer\_id} &
+  \texttt{full\_name, email, phone, signup\_date} \\
+\texttt{dim\_product}       & \texttt{product\_id} &
+  \texttt{name, category, brand, sku, unit\_cost, unit\_price} \\
+\texttt{dim\_store}         & \texttt{store\_id} &
+  enriquecida con \texttt{city\_zone}:
+  \texttt{district, area\_type, zone\_orientation} \\
+\texttt{dim\_offer}         & \texttt{offer\_id} &
+  \texttt{discount\_percent, start\_date, end\_date} \\
+\texttt{dim\_return\_reason} & \texttt{reason\_id} &
+  \texttt{reason, active} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Hechos.} Las dos tablas de hechos son:
+
+\begin{itemize}
+  \item \textbf{\texttt{fact\_sales}} (grano = línea de venta,
+        $42\,555$~filas): incluye las métricas \texttt{quantity},
+        \texttt{unit\_price}, \texttt{unit\_cost}, \texttt{subtotal},
+        \texttt{cost} y \texttt{margin}.
+  \item \textbf{\texttt{fact\_returns}} (grano = línea devuelta,
+        $2\,330$~filas): incluye \texttt{quantity} y
+        \texttt{returned\_value}, con las FKs \texttt{customer\_sk},
+        \texttt{product\_sk} y \texttt{store\_sk} denormalizadas desde
+        \texttt{fact\_sales} (véase apartado~\ref{sec:disenio-dwh}).
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dim_diagram.png}
+  \caption[Modelo dimensional en estrella del esquema \texttt{dwh}]{%
+    Modelo dimensional en estrella del esquema \texttt{dwh}: seis
+    dimensiones y dos hechos (\texttt{fact\_sales} en rojo,
+    \texttt{fact\_returns} en ámbar). La línea discontinua entre los dos
+    hechos indica la relación de \emph{drill-through} por
+    \texttt{sale\_item\_id}: cada devolución apunta a la línea original
+    vendida.}
+  \label{fig:dim}
+\end{figure}
+
+\section{Decisiones de diseño}
+\label{sec:disenio-dwh}
+
+El DDL completo aparece en el apéndice~\ref{ap:ddl}. Conviene destacar
+cuatro decisiones que condicionan el resto del informe:
+
+\paragraph{Surrogate keys con \emph{business key} \texttt{unique}.}
+Todas las dimensiones tienen una columna \texttt{*\_sk} de tipo
+\texttt{serial} como clave primaria y conservan la clave del esquema
+\texttt{public} (\texttt{customer\_id}, \texttt{product\_id}\dots) como
+columna \texttt{unique}. Esto permite recargar la dimensión de manera
+idempotente: un \texttt{truncate~\dots~restart identity} regenera las
+\emph{surrogate keys} sin romper los \texttt{join} de los hechos, siempre
+que se vuelvan a cargar también éstos. El siguiente fragmento ilustra el
+patrón:
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={Definición de \texttt{dim\_customer} con \emph{surrogate} y
+  \emph{business key}.},
+  label={lst:dim_customer}]
+create table dwh.dim_customer (
+    customer_sk  serial        primary key,
+    customer_id  int           not null unique,
+    full_name    varchar(200),
+    email        varchar(200),
+    phone        varchar(50),
+    signup_date  date
+);
+\end{lstlisting}
+
+\paragraph{\texttt{dim\_product} como \texttt{LEFT JOIN} entre las dos
+fuentes.} La tabla cruda \texttt{product} tiene $50$ filas y
+\texttt{central\_product} sólo $49$: hay un producto sin ficha
+centralizada y, por tanto, sin coste unitario. La transformación de
+\texttt{dim\_product} (apéndice~\ref{ap:transformaciones}) combina ambas
+fuentes con un \texttt{LEFT JOIN}, lo que garantiza que los $50$
+productos lleguen al DWH aunque uno de ellos quede sin coste. El
+\texttt{unit\_cost} ausente se gestiona a posteriori al calcular el
+margen.
+
+\paragraph{FKs denormalizadas en \texttt{fact\_returns}.} La transformación
+\texttt{70\_load\_fact\_returns.sql} no recurre a las dimensiones para
+resolver \texttt{customer\_sk}, \texttt{product\_sk} y \texttt{store\_sk}
+de las devoluciones: las copia directamente desde la fila correspondiente
+de \texttt{fact\_sales} a través de \texttt{sale\_item\_id}. Esto reduce el
+número de \texttt{join} necesarios en consultas analíticas sobre
+devoluciones (por ejemplo, \emph{volumen de devoluciones por tienda}) y
+asegura que las dimensiones de venta y devolución coincidan exactamente.
+
+\paragraph{Recálculo de \texttt{subtotal} en \texttt{staging}.} En los datos
+crudos había $8$ filas en las que el \texttt{subtotal} no coincidía con
+$\texttt{quantity} \times \texttt{unit\_price}$. El staging recomputa
+\texttt{subtotal} en el $100\%$ de las líneas para garantizar coherencia
+con el resto de columnas y, por extensión, con la fórmula del CLTV. El
+test \texttt{test\_revenue\_matches\_between\_staging\_and\_dwh}
+(apéndice~\ref{ap:tests}) comprueba que esta corrección no rompe la
+conservación de ingresos entre \texttt{staging} y el DWH.
+
+\bigskip
+\noindent
+La definición completa de \texttt{fact\_sales} captura todos estos
+elementos: claves subrogadas hacia las cinco dimensiones, claves de
+negocio (\texttt{sale\_item\_id}, \texttt{sale\_id}) y métricas
+preagregadas en la propia tabla:
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={DDL de \texttt{fact\_sales} (resumen).},
+  label={lst:fact_sales_ddl}]
+create table dwh.fact_sales (
+    sale_item_id  int           primary key,
+    sale_id       int           not null,
+    sale_date_id  int           not null references dwh.dim_date(date_id),
+    customer_sk   int           references dwh.dim_customer(customer_sk),
+    product_sk    int           references dwh.dim_product(product_sk),
+    store_sk      int           references dwh.dim_store(store_sk),
+    offer_sk      int           references dwh.dim_offer(offer_sk),
+    quantity      int           not null,
+    unit_price    numeric(12,2) not null,
+    unit_cost     numeric(12,2),
+    subtotal      numeric(14,2) not null,
+    cost          numeric(14,2),
+    margin        numeric(14,2)
+);
+\end{lstlisting}

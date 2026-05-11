@@ -1,0 +1,458 @@
+\chapter{Apéndice}
+\label{ch:apendice}
+
+\section{Esquema completo del DWH}
+\label{ap:ddl}
+
+Se reproducen aquí los \texttt{DDL} de \texttt{sql/02\_dwh\_schema/} tal
+como están en el repositorio. Las claves subrogadas usan \texttt{serial}
+y las claves de negocio se marcan \texttt{unique}.
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={\texttt{sql/02\_dwh\_schema/00\_create\_schema.sql}: creación
+  del esquema \texttt{dwh}.},
+  label={lst:ap-create-schema}]
+-- Esquema dwh: modelo en estrella.
+create schema if not exists dwh;
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={\texttt{sql/02\_dwh\_schema/10\_dim\_tables.sql}: dimensiones
+  del DWH.},
+  label={lst:ap-dim-tables}]
+-- Tablas de dimension.
+
+drop table if exists dwh.dim_date cascade;
+create table dwh.dim_date (
+    date_id      int           primary key,         -- yyyymmdd
+    full_date    date          not null unique,
+    year         smallint      not null,
+    quarter      smallint      not null,
+    month        smallint      not null,
+    month_name   varchar(15)   not null,
+    day          smallint      not null,
+    day_of_week  smallint      not null,
+    day_name     varchar(15)   not null,
+    week_of_year smallint      not null,
+    is_weekend   boolean       not null
+);
+
+drop table if exists dwh.dim_customer cascade;
+create table dwh.dim_customer (
+    customer_sk  serial        primary key,
+    customer_id  int           not null unique,
+    full_name    varchar(200),
+    email        varchar(200),
+    phone        varchar(50),
+    signup_date  date
+);
+
+drop table if exists dwh.dim_product cascade;
+create table dwh.dim_product (
+    product_sk   serial        primary key,
+    product_id   int           not null unique,
+    name         varchar(200),
+    category     varchar(100),
+    brand        varchar(100),
+    sku          varchar(50),
+    unit_cost    numeric(12,2),
+    unit_price   numeric(12,2)
+);
+
+drop table if exists dwh.dim_store cascade;
+create table dwh.dim_store (
+    store_sk     serial        primary key,
+    store_id     int           not null unique,
+    name         varchar(200),
+    address      varchar(200),
+    city         varchar(100),
+    postal_code  varchar(10),
+    district     varchar(100),
+    area_type    varchar(50),
+    zone_orientation varchar(50),
+    opened_date  date
+);
+
+drop table if exists dwh.dim_offer cascade;
+create table dwh.dim_offer (
+    offer_sk         serial      primary key,
+    offer_id         int         not null unique,
+    name             varchar(200),
+    discount_percent numeric(5,2),
+    start_date       date,
+    end_date         date
+);
+
+drop table if exists dwh.dim_return_reason cascade;
+create table dwh.dim_return_reason (
+    reason_sk    serial        primary key,
+    reason_id    int           not null unique,
+    reason       text,
+    active       boolean
+);
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={\texttt{sql/02\_dwh\_schema/20\_fact\_tables.sql}: hechos del
+  DWH.},
+  label={lst:ap-fact-tables}]
+-- Tablas de hechos.
+
+drop table if exists dwh.fact_sales cascade;
+create table dwh.fact_sales (
+    sale_item_id  int           primary key,
+    sale_id       int           not null,
+    sale_date_id  int           not null references dwh.dim_date(date_id),
+    customer_sk   int           references dwh.dim_customer(customer_sk),
+    product_sk    int           references dwh.dim_product(product_sk),
+    store_sk      int           references dwh.dim_store(store_sk),
+    offer_sk      int           references dwh.dim_offer(offer_sk),
+    quantity      int           not null,
+    unit_price    numeric(12,2) not null,
+    unit_cost     numeric(12,2),
+    subtotal      numeric(14,2) not null,
+    cost          numeric(14,2),
+    margin        numeric(14,2)
+);
+create index ix_fs_customer on dwh.fact_sales(customer_sk);
+create index ix_fs_product  on dwh.fact_sales(product_sk);
+create index ix_fs_store    on dwh.fact_sales(store_sk);
+create index ix_fs_date     on dwh.fact_sales(sale_date_id);
+
+drop table if exists dwh.fact_returns cascade;
+create table dwh.fact_returns (
+    return_id        int           primary key,
+    sale_item_id     int           references dwh.fact_sales(sale_item_id),
+    return_date_id   int           not null references dwh.dim_date(date_id),
+    customer_sk      int           references dwh.dim_customer(customer_sk),
+    product_sk       int           references dwh.dim_product(product_sk),
+    store_sk         int           references dwh.dim_store(store_sk),
+    reason_sk        int           references dwh.dim_return_reason(reason_sk),
+    quantity         int           not null,
+    returned_value   numeric(14,2)
+);
+create index ix_fr_customer on dwh.fact_returns(customer_sk);
+create index ix_fr_product  on dwh.fact_returns(product_sk);
+create index ix_fr_date     on dwh.fact_returns(return_date_id);
+\end{lstlisting}
+
+\section{Transformaciones SQL (resumen)}
+\label{ap:transformaciones}
+
+Las transformaciones \texttt{20\_load\_dim\_customer.sql} a
+\texttt{50\_load\_dim\_misc.sql} se reproducen tal cual; las dos cargas
+de hechos ya aparecen en los listados~\ref{lst:fact_sales_load} y los
+\texttt{LEFT JOIN} de \texttt{fact\_returns} se citan a continuación.
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={\texttt{30\_load\_dim\_product.sql}: combinación de
+  \texttt{product} y \texttt{central\_product}.},
+  label={lst:ap-dim-product}]
+-- dim_product: combina staging.product (50) con staging.central_product (49).
+truncate table dwh.dim_product restart identity cascade;
+
+insert into dwh.dim_product (product_id, name, category, brand, sku, unit_cost, unit_price)
+select  p.product_id,
+        coalesce(cp.name, p.name)                                         as name,
+        coalesce(cat.name, p.category)                                    as category,
+        coalesce(b.name,  p.manufacturer)                                 as brand,
+        cp.sku,
+        cp.unit_cost,
+        coalesce(cp.unit_price, p.price)                                  as unit_price
+from staging.product p
+left join staging.central_product cp on cp.product_id = p.product_id
+left join staging.category   cat on cat.category_id = cp.category_id
+left join staging.brand      b   on b.brand_id      = cp.brand_id;
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={\texttt{70\_load\_fact\_returns.sql}: reutilización de FKs de
+  \texttt{fact\_sales}.},
+  label={lst:ap-fact-returns}]
+truncate table dwh.fact_returns cascade;
+
+insert into dwh.fact_returns
+       (return_id, sale_item_id, return_date_id, customer_sk, product_sk,
+        store_sk, reason_sk, quantity, returned_value)
+select  ri.return_id,
+        ri.sale_item_id,
+        to_char(ri.return_date, 'YYYYMMDD')::int  as return_date_id,
+        fs.customer_sk,
+        fs.product_sk,
+        fs.store_sk,
+        drr.reason_sk,
+        ri.quantity,
+        ri.quantity * fs.unit_price               as returned_value
+from staging.return_item ri
+left join dwh.fact_sales       fs  on fs.sale_item_id = ri.sale_item_id
+left join dwh.dim_return_reason drr on drr.reason_id  = ri.reason_id;
+\end{lstlisting}
+
+\section{Listados completos de Python}
+\label{ap:python}
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{src/analytics/cltv.py}.},
+  label={lst:ap-cltv}]
+"""Calculo de CLTV por cliente.
+
+Formula del enunciado:
+    CLTV = Ingresos_t x Margen_t x Frecuencia_t x R_t
+
+Donde, en la ventana temporal t:
+    - Ingresos_t   = ingresos netos del cliente (ventas - devoluciones).
+    - Margen_t     = (ingresos - coste) / ingresos  (proporcion).
+    - Frecuencia_t = n. de tickets distintos del cliente.
+    - R_t          = retencion = meses_activos / meses_de_la_ventana.
+"""
+from __future__ import annotations
+import pandas as pd
+
+def compute_cltv(df : pd.DataFrame) -> pd.DataFrame:
+    """Calcula el CLTV de cada cliente con compras."""
+    df["cltv"] = (
+        df["net_revenue"].astype(float)
+        * df["margin_rate"].astype(float)
+        * df["frequency"].astype(float)
+        * df["retention_rate"].astype(float)
+    )
+    return df.sort_values("cltv", ascending=False).reset_index(drop=True)
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{src/analytics/clustering.py}.},
+  label={lst:ap-clustering}]
+"""Segmentacion de clientes con PCA + KMeans."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+
+@dataclass
+class ClusteringResult:
+    df: pd.DataFrame                  # df + columnas pc1, pc2, cluster
+    pca: PCA
+    scaler: StandardScaler
+    kmeans: KMeans
+    explained_variance: np.ndarray
+    inertia_curve: dict[int, float]   # k -> inertia, para escoger k
+
+
+def _elbow(X: np.ndarray, ks=range(2, 9), random_state=42) -> dict[int, float]:
+    return {k: KMeans(n_clusters=k, n_init=10, random_state=random_state).fit(X).inertia_
+            for k in ks}
+
+
+def run_pca_kmeans(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    n_clusters: int = 3,
+    n_components: int = 2,
+    random_state: int = 42,
+) -> ClusteringResult:
+    """Estandariza, aplica PCA(n_components) y KMeans(n_clusters)."""
+    X = df[feature_cols].astype(float).fillna(0).to_numpy()
+    scaler = StandardScaler().fit(X)
+    Xs = scaler.transform(X)
+
+    pca = PCA(n_components=n_components, random_state=random_state).fit(Xs)
+    Xp = pca.transform(Xs)
+
+    inertia = _elbow(Xp, random_state=random_state)
+    km = KMeans(n_clusters=n_clusters, n_init=10, random_state=random_state).fit(Xp)
+
+    out = df.copy()
+    for i in range(n_components):
+        out[f"pc{i+1}"] = Xp[:, i]
+    out["cluster"] = km.labels_
+    return ClusteringResult(out, pca, scaler, km, pca.explained_variance_ratio_, inertia)
+
+
+def save_artifacts(result: ClusteringResult, out_dir: str | Path) -> None:
+    import joblib
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    joblib.dump(result.scaler, out / "scaler.joblib")
+    joblib.dump(result.pca, out / "pca.joblib")
+    joblib.dump(result.kmeans, out / "kmeans.joblib")
+    result.df.to_parquet(out / "customer_segments.parquet", index=False)
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{src/db/engine.py}.},
+  label={lst:ap-engine}]
+"""Conexion a Postgres y helpers para ejecutar SQL."""
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+
+import pandas as pd
+from sqlalchemy import Engine, create_engine, text
+
+from config.settings import settings
+
+
+@lru_cache(maxsize=1)
+def get_engine() -> Engine:
+    """Engine SQLAlchemy reutilizable (singleton)."""
+    return create_engine(settings.database_url, future=True, pool_pre_ping=True)
+
+
+def run_sql(sql: str, **params) -> None:
+    """Ejecuta una sentencia SQL (DDL o DML) con autocommit."""
+    eng = get_engine()
+    with eng.begin() as conn:
+        conn.execute(text(sql), params or None)
+
+
+def run_sql_file(path: str | Path) -> None:
+    """Ejecuta un archivo .sql completo. Asume sentencias separadas por ';'.
+
+    Compatible con bloques DO $$ ... $$ porque ejecuta el archivo entero
+    en una sola transaccion usando exec_driver_sql.
+    """
+    raw = Path(path).read_text(encoding="utf-8")
+    eng = get_engine()
+    with eng.begin() as conn:
+        conn.exec_driver_sql(raw)
+
+
+def read_sql(sql: str, **params) -> pd.DataFrame:
+    """Devuelve un DataFrame desde una consulta."""
+    eng = get_engine()
+    return pd.read_sql(text(sql), eng, params=params or None)
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{src/etl/load.py}.},
+  label={lst:ap-load}]
+"""Helpers de carga: ejecutar SQL en orden y resetear esquemas."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from src.db import run_sql, run_sql_file
+from src.utils import get_logger
+
+log = get_logger("etl.load")
+
+
+def run_sql_directory(directory: str | Path) -> list[Path]:
+    """Ejecuta los .sql de un directorio en orden alfabetico."""
+    files = sorted(Path(directory).glob("*.sql"))
+    for f in files:
+        log.info("Ejecutando %s", f.name)
+        run_sql_file(f)
+    return files
+\end{lstlisting}
+
+\section{Manifiesto de tests}
+\label{ap:tests}
+
+Los listados completos de \texttt{tests/test\_cltv.py} y
+\texttt{tests/test\_dwh\_integrity.py} aparecen a continuación. En el
+capítulo~\ref{ch:conclusiones} ya se describe brevemente cada test.
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{tests/test\_cltv.py}.},
+  label={lst:ap-test-cltv}]
+"""Validan la logica de CLTV y metricas."""
+import pytest
+
+from src.db import read_sql
+
+try:
+    read_sql("select 1")
+except Exception as e:  # pragma: no cover
+    pytest.skip(f"DB no disponible: {e}", allow_module_level=True)
+
+from src.analytics import compute_cltv, compute_customer_metrics
+
+
+def test_cltv_columns_present():
+    df = compute_cltv()
+    expected = {
+        "customer_id", "full_name", "gross_revenue", "net_revenue",
+        "margin_rate", "frequency", "retention_rate", "cltv",
+    }
+    assert expected.issubset(df.columns)
+
+
+def test_cltv_formula_consistency():
+    df = compute_cltv().head(50).copy()
+    expected = (
+        df["net_revenue"].astype(float)
+        * df["margin_rate"].astype(float)
+        * df["frequency"].astype(float)
+        * df["retention_rate"].astype(float)
+    )
+    assert ((df["cltv"] - expected).abs() < 1e-6).all()
+
+
+def test_metrics_aov_matches_revenue_div_frequency():
+    m = compute_customer_metrics().head(100).copy()
+    pos = m[m["frequency"] > 0]
+    expected = pos["net_revenue"].astype(float) / pos["frequency"].astype(float)
+    assert ((pos["aov"].astype(float) - expected).abs() < 1e-6).all()
+
+
+def test_recency_is_non_negative():
+    m = compute_customer_metrics()
+    assert (m["recency_days"] >= 0).all()
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{tests/test\_dwh\_integrity.py}.},
+  label={lst:ap-test-dwh}]
+"""Validan que el DWH este coherente respecto al raw."""
+import pytest
+
+from src.db import read_sql
+
+# Si no hay BD disponible, saltamos todos los tests de integridad.
+try:
+    read_sql("select 1 as ok")
+except Exception as e:  # pragma: no cover
+    pytest.skip(f"DB no disponible: {e}", allow_module_level=True)
+
+
+def test_fact_sales_matches_raw_sale_item_count():
+    raw = read_sql("select count(*) as n from public.sale_item").iloc[0]["n"]
+    dwh = read_sql("select count(*) as n from dwh.fact_sales").iloc[0]["n"]
+    assert int(raw) == int(dwh)
+
+
+def test_fact_returns_matches_raw_return_item_count():
+    raw = read_sql("select count(*) as n from public.return_item").iloc[0]["n"]
+    dwh = read_sql("select count(*) as n from dwh.fact_returns").iloc[0]["n"]
+    assert int(raw) == int(dwh)
+
+
+def test_dim_customer_unique_business_key():
+    df = read_sql(
+        "select customer_id, count(*) c from dwh.dim_customer group by 1 having count(*) > 1"
+    )
+    assert df.empty
+
+
+def test_no_dangling_dim_date_in_facts():
+    bad = read_sql("""
+        select count(*) as n from dwh.fact_sales f
+        where not exists (select 1 from dwh.dim_date d where d.date_id = f.sale_date_id)
+    """).iloc[0]["n"]
+    assert int(bad) == 0
+
+
+def test_revenue_matches_between_staging_and_dwh():
+    stg = read_sql("select sum(subtotal) as v from staging.sale_item").iloc[0]["v"]
+    dwh = read_sql("select sum(subtotal) as v from dwh.fact_sales").iloc[0]["v"]
+    assert abs(float(stg) - float(dwh)) < 0.01
+\end{lstlisting}

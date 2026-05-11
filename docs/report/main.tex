@@ -1,0 +1,66 @@
+% main.tex — Informe técnico del proyecto final de Gestión de Datos (UAX, 2025/26)
+% Autor: Alejandro Barreche
+%
+% Compilación:
+%   latexmk -pdf -interaction=nonstopmode main.tex
+% o, alternativamente:
+%   pdflatex -interaction=nonstopmode main.tex (dos pasadas)
+%
+% No hay bibliografía: el informe se sostiene sobre el código y los datos
+% del propio repositorio. No requiere biber.
+
+\documentclass[11pt, a4paper, oneside]{report}
+\usepackage{projectreport}
+
+% --- Metadatos del informe ---------------------------------------------------
+\renewcommand{\name}{Alejandro Barreche}
+\renewcommand{\course}{Grado en Ingeniería Matemática}
+\renewcommand{\projecttitle}{%
+  SalesHealth: construcción de un Data Warehouse y segmentación de clientes
+  mediante CLTV y PCA+KMeans%
+}
+\renewcommand{\submissiondate}{Mayo 2026}
+
+\begin{document}
+
+% ------------------------------------------------------------------ Portada --
+\makecoverpage
+
+% --------------------------------------------------------- Resumen / abstract
+\chapter*{Resumen}
+\addcontentsline{toc}{chapter}{Resumen}
+\thispagestyle{plain}
+
+Este informe documenta el proyecto \textbf{SalesHealth}, entrega final de la
+asignatura Gestión de Datos del curso 2025/26 en la Universidad Alfonso X El
+Sabio. Sobre un dataset relacional sintético del sector salud y bienestar
+($5\,750$ clientes, $20\,000$ tickets de venta, $42\,555$ líneas, $2\,330$
+devoluciones, ventana 2020-01--2026-01) se construye un \emph{Data Warehouse}
+con esquema en estrella sobre PostgreSQL, se calcula el \emph{Customer
+Lifetime Value} (CLTV) por cliente según la fórmula del enunciado
+$\mathrm{CLTV} = \text{Ingresos}_t \times \text{Margen}_t \times
+\text{Frecuencia}_t \times R_t$, y se segmenta la base mediante PCA y KMeans
+sobre ocho métricas derivadas. La cadena ETL queda automatizada por seis
+notebooks numerados y por SQL idempotente; los resultados se consumen desde
+un dashboard estático HTML+Plotly servido por Flask. El proyecto incluye una
+batería de pruebas \texttt{pytest} para la integridad referencial del DWH y
+para la consistencia de la fórmula de CLTV.
+
+
+% --------------------------------------------------------------- Índices ----
+\tableofcontents
+
+% --------------------------------------------------------------- Capítulos --
+\include{chapter1_introduccion}
+\include{chapter2_modelo_datos}
+\include{chapter3_etl}
+\include{chapter4_cltv_metricas}
+\include{chapter5_segmentacion}
+\include{chapter6_dashboard}
+\include{chapter7_conclusiones}
+
+% --------------------------------------------------------------- Apéndice ---
+\appendix
+\include{appendix}
+
+\end{document}

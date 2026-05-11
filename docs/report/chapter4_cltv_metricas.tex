@@ -1,0 +1,202 @@
+\chapter{CLTV y métricas de cliente}
+\label{ch:cltv}
+
+\section{Fórmula del CLTV}
+
+El enunciado fija el CLTV (\emph{Customer Lifetime Value}) por cliente
+mediante la siguiente expresión, válida sobre una ventana temporal $t$:
+
+\begin{align}
+  \mathrm{CLTV}(c)
+  \;=\;
+  \text{Ingresos}_t(c) \;\times\;
+  \text{Margen}_t(c) \;\times\;
+  \text{Frecuencia}_t(c) \;\times\;
+  R_t(c).
+  \label{eq:cltv}
+\end{align}
+
+En la implementación del proyecto, la ventana es la cobertura efectiva
+del dataset, $\,2020\text{-}01 \to 2026\text{-}01$, esto es, $W=72$ meses
+naturales.
+
+\section{Operacionalización}
+
+Cada componente de la ecuación~\eqref{eq:cltv} se traduce a una columna
+calculada por cliente en
+\texttt{data/processed/cltv.parquet}. La
+tabla~\ref{tab:cltv-componentes} formaliza esa traducción.
+
+\begin{table}[H]
+\centering
+\caption{Operacionalización de la fórmula de CLTV sobre el DWH.}
+\label{tab:cltv-componentes}
+\small
+\begin{tabular}{l p{9.5cm}}
+\toprule
+\textbf{Componente} & \textbf{Definición} \\
+\midrule
+$\text{Ingresos}_t$  &
+  $\displaystyle
+    \sum_{l \in \text{ventas}(c)} \text{subtotal}_l
+    \;-\;
+    \sum_{r \in \text{devoluciones}(c)} \text{returned\_value}_r$
+  \;(columna \texttt{net\_revenue}). \\
+$\text{Margen}_t$    &
+  $\dfrac{\text{Ingresos}_t - \sum_l \text{unit\_cost}_l \cdot
+    \text{quantity}_l}{\text{Ingresos}_t}$
+  \;(columna \texttt{margin\_rate}, proporción $\in [-\,\dots\,,1]$). \\
+$\text{Frecuencia}_t$ &
+  número de tickets distintos:
+  $|\{\,\text{sale\_id} : c\,\}|$
+  \;(columna \texttt{frequency}). \\
+$R_t$                 &
+  retención: meses con al menos una compra dividido por la ventana,
+  $R_t = \texttt{active\_months}/W$ con $W=72$
+  \;(columna \texttt{retention\_rate}). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Comentarios.} El margen es una \emph{proporción} sobre los
+ingresos netos, no un valor monetario; multiplicado por $\text{Ingresos}_t$
+recupera la magnitud monetaria. Los clientes con $\text{Ingresos}_t < 0$
+(devoluciones que superan ventas) o con coste mayor que ingresos pueden
+tener $\text{Margen}_t$ negativo o $> 1$, lo cual se preserva tal cual sin
+truncar para no falsear el dato original (véase
+capítulo~\ref{ch:conclusiones}, \emph{Limitaciones}).
+
+\section{Implementación}
+
+La operacionalización anterior se reparte en dos lugares: una consulta SQL
+en el notebook~03 que agrega los componentes por cliente, y el módulo
+\texttt{src/analytics/cltv.py} que aplica la fórmula multiplicativa de la
+ecuación~\eqref{eq:cltv}. El módulo entero es deliberadamente compacto:
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{src/analytics/cltv.py}: aplicación de la fórmula de
+  CLTV sobre las componentes ya agregadas.},
+  label={lst:cltv_module}]
+"""Calculo de CLTV por cliente.
+
+Formula del enunciado:
+    CLTV = Ingresos_t x Margen_t x Frecuencia_t x R_t
+
+Donde, en la ventana temporal t:
+    - Ingresos_t   = ingresos netos del cliente (ventas - devoluciones).
+    - Margen_t     = (ingresos - coste) / ingresos  (proporcion).
+    - Frecuencia_t = n. de tickets distintos del cliente.
+    - R_t          = retencion = meses_activos / meses_de_la_ventana.
+"""
+from __future__ import annotations
+import pandas as pd
+
+def compute_cltv(df : pd.DataFrame) -> pd.DataFrame:
+    """Calcula el CLTV de cada cliente con compras."""
+    df["cltv"] = (
+        df["net_revenue"].astype(float)
+        * df["margin_rate"].astype(float)
+        * df["frequency"].astype(float)
+        * df["retention_rate"].astype(float)
+    )
+    return df.sort_values("cltv", ascending=False).reset_index(drop=True)
+\end{lstlisting}
+
+\noindent El test
+\texttt{test\_cltv\_formula\_consistency} (apéndice~\ref{ap:tests})
+recalcula la fórmula sobre las primeras $50$ filas y comprueba que el
+valor almacenado coincide con el producto de las cuatro componentes.
+
+\section{Resultados agregados}
+\label{sec:cltv-resultados}
+
+La tabla~\ref{tab:cltv-stats} resume las cinco distribuciones implicadas.
+Los valores se han leído directamente de \texttt{cltv.parquet} con
+\texttt{pandas.DataFrame.describe} y redondeado a unidades manejables.
+
+\begin{table}[H]
+\centering
+\caption{Estadísticos por componente de CLTV ($n=5\,750$ clientes; ventana
+$W=72$ meses).}
+\label{tab:cltv-stats}
+\small
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Magnitud} & \textbf{Mediana} & \textbf{Media} & \textbf{Máximo} \\
+\midrule
+Ingresos brutos (\texteuro)      & $149{,}90$  & $1\,683{,}26$  & $24\,922{,}00$ \\
+Margen (proporción)             & $0{,}400$   & $0{,}364$      & $1{,}000$      \\
+Frecuencia (tickets)            & $1$         & $3{,}48$       & $34$           \\
+Retención $R_t$ ($\,/72$)       & $0{,}0139$  & $0{,}0436$     & $0{,}4028$     \\
+\textbf{CLTV (\texteuro)}        & \textbf{0{,}72} & \textbf{$3\,165{,}48$} &
+                                   \textbf{$109\,734{,}95$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent La distancia entre mediana y media del CLTV ($0{,}72$\,\texteuro\
+frente a $3\,165$\,\texteuro) refleja la asimetría extrema de la
+distribución: la mayoría de clientes presenta frecuencia $1$ y retención
+$\approx 1/72$, mientras que un pequeño grupo recurrente concentra todo
+el valor (figura~\ref{fig:cltv-hist}). El máximo, $109\,735$\,\texteuro,
+corresponde al cliente con $\text{customer\_id}=212$.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{cltv_distribution.png}
+  \caption[Distribución del CLTV]{%
+    Distribución del CLTV en \texttt{cltv.parquet}. Histograma en escala
+    $\log_{10}$ a la izquierda; \emph{box-plot} con eje horizontal
+    en escala simétrica logarítmica (\texttt{symlog}, $\text{linthresh}=1$)
+    a la derecha.}
+  \label{fig:cltv-hist}
+\end{figure}
+
+\section{Métricas adicionales por cliente}
+
+Además del CLTV, el notebook~04 genera tres métricas complementarias en
+\texttt{customer\_metrics.parquet}:
+
+\begin{itemize}
+  \item \textbf{Recencia} (\texttt{recency\_days}): días desde la última
+        compra hasta la fecha de corte. Mediana $421$\,d, P75
+        $\approx 1\,300$\,d, P95 $\approx 1\,782$\,d, máximo $1\,824$\,d
+        (~$5$ años).
+  \item \textbf{Ticket medio} o \emph{AOV} (\texttt{aov}): cociente entre
+        ingresos netos y frecuencia. Mediana $129{,}99$\,\texteuro, media
+        $210{,}04$\,\texteuro, P75 $\approx 300$\,\texteuro\ y máximo
+        $1\,199{,}97$\,\texteuro\ (un AOV negativo aparece para los
+        clientes con devolución superior a la venta).
+  \item \textbf{Tasa de devolución} (\texttt{return\_rate}):
+        $\texttt{returned\_value} / \texttt{gross\_revenue}$. Mediana $0$,
+        media $0{,}069$, máximo $2{,}0$ (clientes en los que la cantidad
+        devuelta duplica la cantidad vendida; este caso \emph{anómalo} es
+        un artefacto del dataset sintético, véase
+        capítulo~\ref{ch:conclusiones}).
+\end{itemize}
+
+\noindent La tabla~\ref{tab:metricas-extra} ofrece la lectura conjunta de
+los estadísticos.
+
+\begin{table}[H]
+\centering
+\caption{Estadísticos de las métricas adicionales por cliente
+($n=5\,750$).}
+\label{tab:metricas-extra}
+\small
+\begin{tabular}{l r r r r}
+\toprule
+\textbf{Métrica} & \textbf{Mediana} & \textbf{Media} & \textbf{P75} & \textbf{Máx.}\\
+\midrule
+Recencia (días)         & $421$    & $673{,}5$  & $1\,300$  & $1\,824$    \\
+AOV (\texteuro)          & $129{,}99$ & $210{,}04$ & $299{,}99$ & $1\,199{,}97$ \\
+Tasa de devolución     & $0$      & $0{,}069$  & $0$       & $2{,}0$     \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Los tests \texttt{test\_metrics\_aov\_matches\_revenue\_div\_frequency} y
+\texttt{test\_recency\_is\_non\_negative} (apéndice~\ref{ap:tests})
+formalizan las dos invariantes clave de estas métricas: el AOV recompone
+los ingresos netos a partir de la frecuencia, y la recencia nunca puede
+ser negativa.

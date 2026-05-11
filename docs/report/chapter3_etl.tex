@@ -1,0 +1,218 @@
+\chapter{ETL: del raw al DWH}
+\label{ch:etl}
+
+\section{Pipeline y orquestación}
+
+El proyecto adopta una arquitectura ETL clásica en tres saltos
+(figura conceptual):
+
+\[
+  \underbrace{\texttt{public}}_{\text{raw}}
+  \;\longrightarrow\;
+  \underbrace{\texttt{staging}}_{\text{cleaned}}
+  \;\longrightarrow\;
+  \underbrace{\texttt{dwh}}_{\text{star schema}}
+\]
+
+La orquestación es deliberadamente simple: seis notebooks Jupyter
+numerados (\texttt{notebooks/00\_\dots} a \texttt{notebooks/05\_\dots}) que
+se ejecutan en orden y comparten utilidades reutilizables alojadas en el
+paquete \texttt{src/}. No hay Airflow, Prefect ni Dagster. La
+tabla~\ref{tab:notebooks} resume cada paso.
+
+\begin{table}[H]
+\centering
+\caption{Notebooks que orquestan el pipeline ETL y de analítica.}
+\label{tab:notebooks}
+\small
+\begin{tabular}{l l p{7.5cm}}
+\toprule
+\textbf{\#} & \textbf{Notebook} & \textbf{Salida} \\
+\midrule
+00 & \texttt{00\_exploration.ipynb}      & Perfilado de \texttt{public}.        \\
+01 & \texttt{01\_etl\_staging.ipynb}     & Tablas \texttt{staging.*} limpias.   \\
+02 & \texttt{02\_etl\_dwh.ipynb}         & Esquema \texttt{dwh} cargado.        \\
+03 & \texttt{03\_cltv\_calculation.ipynb} & \texttt{data/processed/cltv.parquet}.\\
+04 & \texttt{04\_customer\_metrics.ipynb}&
+   \texttt{data/processed/customer\_metrics.parquet}. \\
+05 & \texttt{05\_pca\_clustering.ipynb}  &
+   \texttt{models/\{pca,kmeans,scaler\}.joblib} y
+   \texttt{models/customer\_segments.parquet}. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Transformaciones SQL}
+
+Las transformaciones que generan \texttt{dwh} a partir de
+\texttt{staging} viven como scripts SQL versionados en el directorio
+\texttt{sql/03\_transformations/}. Sus nombres siguen un esquema de
+prefijos numéricos para fijar el orden de ejecución:
+
+\begin{enumerate}
+  \item \texttt{10\_load\_dim\_date.sql}: genera \texttt{dim\_date}
+        cubriendo el rango temporal completo de ventas y devoluciones
+        mediante \texttt{generate\_series}.
+  \item \texttt{20\_load\_dim\_customer.sql}: inserta clientes
+        normalizando el nombre completo
+        (\texttt{first\_name} + \texttt{last\_name} + \texttt{last\_name2}).
+  \item \texttt{30\_load\_dim\_product.sql}: combina \texttt{product} con
+        \texttt{central\_product} mediante \texttt{LEFT JOIN}, y resuelve
+        \texttt{category} y \texttt{brand} a partir de sus respectivos
+        catálogos.
+  \item \texttt{40\_load\_dim\_store.sql}: enriquece la tienda con la
+        geografía (\texttt{city\_zone}).
+  \item \texttt{50\_load\_dim\_misc.sql}: carga \texttt{dim\_offer} y
+        \texttt{dim\_return\_reason} en una sola pasada.
+  \item \texttt{60\_load\_fact\_sales.sql}: carga el hecho de ventas con
+        coste y margen ya calculados.
+  \item \texttt{70\_load\_fact\_returns.sql}: carga el hecho de
+        devoluciones reusando las FKs de \texttt{fact\_sales} a través
+        de \texttt{sale\_item\_id}.
+\end{enumerate}
+
+El cuadro~\ref{lst:dim_date} muestra el script más representativo: la
+construcción de la dimensión calendario. Genera todas las fechas entre la
+primera venta y la última devolución, infiere el resto de atributos
+(\texttt{year}, \texttt{quarter}, día de la semana, indicador de fin de
+semana, etc.) y los inserta en \texttt{dim\_date}.
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={\texttt{sql/03\_transformations/10\_load\_dim\_date.sql}:
+  generación de la dimensión calendario por \texttt{generate\_series}.},
+  label={lst:dim_date}]
+truncate table dwh.dim_date cascade;
+
+with bounds as (
+    select  least(
+                (select min(sale_date)::date   from staging.sale),
+                (select min(return_date)::date from staging.return_item)
+            ) as ts,
+            greatest(
+                (select max(sale_date)::date   from staging.sale),
+                (select max(return_date)::date from staging.return_item)
+            ) as te
+),
+calendar as (
+    select generate_series(b.ts, b.te, interval '1 day')::date as d from bounds b
+)
+insert into dwh.dim_date
+select  to_char(d, 'YYYYMMDD')::int        as date_id,
+        d                                  as full_date,
+        extract(year  from d)::int         as year,
+        extract(quarter from d)::int       as quarter,
+        extract(month from d)::int         as month,
+        to_char(d, 'TMMonth')              as month_name,
+        extract(day from d)::int           as day,
+        extract(isodow from d)::int        as day_of_week,
+        to_char(d, 'TMDay')                as day_name,
+        extract(week from d)::int          as week_of_year,
+        extract(isodow from d) in (6,7)    as is_weekend
+from calendar;
+\end{lstlisting}
+
+La carga de \texttt{fact\_sales} ilustra cómo se inyectan las
+\emph{surrogate keys} y cómo se calcula \texttt{cost} y \texttt{margin}
+sin asumir que todos los productos tengan coste:
+
+\begin{lstlisting}[language=SQLpostgres,
+  caption={Carga de \texttt{fact\_sales} reutilizando las dimensiones ya
+  pobladas.},
+  label={lst:fact_sales_load}]
+insert into dwh.fact_sales
+       (sale_item_id, sale_id, sale_date_id, customer_sk, product_sk,
+        store_sk, offer_sk, quantity, unit_price, unit_cost,
+        subtotal, cost, margin)
+select  si.sale_item_id,
+        s.sale_id,
+        to_char(s.sale_date, 'YYYYMMDD')::int                  as sale_date_id,
+        dc.customer_sk, dp.product_sk, ds.store_sk, do2.offer_sk,
+        si.quantity, si.unit_price, dp.unit_cost,
+        si.subtotal,
+        coalesce(dp.unit_cost, 0) * si.quantity                as cost,
+        si.subtotal - coalesce(dp.unit_cost, 0) * si.quantity  as margin
+from staging.sale_item si
+join staging.sale          s   on s.sale_id    = si.sale_id
+left join dwh.dim_customer dc  on dc.customer_id = s.customer_id
+left join dwh.dim_product  dp  on dp.product_id  = si.product_id
+left join dwh.dim_store    ds  on ds.store_id    = s.store_id
+left join dwh.dim_offer    do2 on do2.offer_id   = si.offer_id;
+\end{lstlisting}
+
+\section{Helpers Python}
+
+Los scripts SQL anteriores se ejecutan desde un cuaderno mediante un
+helper minimalista alojado en \texttt{src/etl/load.py}: dado un
+directorio, ordena los \texttt{.sql} alfabéticamente y los aplica con
+\texttt{run\_sql\_file}.
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{src/etl/load.py}: ejecutor de transformaciones SQL.},
+  label={lst:run_sql_dir}]
+def run_sql_directory(directory: str | Path) -> list[Path]:
+    """Ejecuta los .sql de un directorio en orden alfabetico."""
+    files = sorted(Path(directory).glob("*.sql"))
+    for f in files:
+        log.info("Ejecutando %s", f.name)
+        run_sql_file(f)
+    return files
+\end{lstlisting}
+
+\noindent Por debajo, la conexión es un singleton SQLAlchemy expuesto por
+\texttt{src/db/engine.py}, configurado desde \texttt{config/settings.py}
+(que a su vez lee \texttt{.env}). Hay tres funciones públicas:
+\texttt{get\_engine()} (singleton), \texttt{run\_sql\_file(path)}
+(ejecuta un archivo en una sola transacción) y \texttt{read\_sql(sql)}
+(devuelve un \texttt{pandas.DataFrame}). El listado completo aparece en
+el apéndice~\ref{ap:python}.
+
+\section{Logging y trazabilidad}
+
+Todos los pasos de la ETL escriben a través del logger común
+\texttt{src.utils.get\_logger}, que aplica un formato consistente:
+
+\begin{lstlisting}[language=Python,
+  caption={\texttt{src/utils/logger.py}: logger compartido.},
+  label={lst:logger}]
+def get_logger(name: str = "proyecto-final", level: int = logging.INFO) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    logger.setLevel(level)
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+        datefmt="%H:%M:%S"))
+    logger.addHandler(h)
+    logger.propagate = False
+    return logger
+\end{lstlisting}
+
+Este logger se utiliza por \texttt{src.etl.load} y por el resto de
+módulos analíticos para emitir trazas tipo
+\texttt{HH:MM:SS [INFO] etl.load — Ejecutando 60\_load\_fact\_sales.sql}.
+
+\section{Reproducibilidad}
+
+El pipeline completo se reproduce desde cero con cuatro comandos. Todos
+ellos se invocan sobre el entorno \texttt{UAX}:
+
+\begin{lstlisting}[language=bash,
+  caption={Reproducción end-to-end del pipeline.},
+  label={lst:reproducir}]
+# 1. Variables de entorno
+cp .env.example .env   # rellenar DB_USER y DB_PASSWORD
+
+# 2. Dependencias
+conda run -n UAX pip install -r requirements.txt
+
+# 3. Pipeline completo (ETL + analitica)
+conda run -n UAX jupyter nbconvert --to notebook --execute --inplace notebooks/0*.ipynb
+
+# 4. Dashboard
+conda run -n UAX python -m dashboard.html.build
+conda run -n UAX python -m dashboard.html.server --port 8001
+\end{lstlisting}
+
+\noindent El conjunto de tests de \texttt{pytest} actúa como red de
+seguridad y se describe en el capítulo~\ref{ch:conclusiones}.

@@ -1,0 +1,181 @@
+\chapter{Dashboard}
+\label{ch:dashboard}
+
+\section{Arquitectura}
+
+El dashboard del proyecto es un \emph{sitio web estático} generado por
+\texttt{dashboard/html/build.py} y servido por un pequeño backend Flask
+(\texttt{dashboard/html/server.py}) que añade unos cuantos endpoints REST
+sobre el DWH y los artefactos serializados. El build genera un único
+fichero \texttt{index.html} (de aproximadamente $1{,}1$\,MB) con todas las
+vistas embebidas y todo el JavaScript de interactividad inline; los datos
+en vivo se obtienen vía \emph{fetch} contra los endpoints del servidor. El
+servidor también detecta automáticamente si PostgreSQL está accesible y
+conmuta entre dos modos:
+
+\begin{itemize}
+  \item \textbf{Modo \emph{vivo}}: las vistas de \emph{Visión General} y
+        \emph{Productos} consultan directamente \texttt{dwh.fact\_sales}
+        y \texttt{dwh.fact\_returns} para mostrar KPIs del periodo,
+        evolución diaria y \emph{rankings} de tiendas y productos.
+  \item \textbf{Modo \emph{offline}}: ante la ausencia de PostgreSQL,
+        las vistas dependientes de DWH se reemplazan por su versión
+        construida sólo desde los \emph{parquet} ya generados.
+\end{itemize}
+
+\section{Endpoints REST}
+
+El backend expone los siguientes endpoints, todos en JSON:
+
+\begin{lstlisting}[language=Python,
+  caption={Endpoints del servidor del dashboard, en \texttt{server.py}.},
+  label={lst:endpoints}]
+GET /api/health                       # ping; n_customers, dwh online?
+GET /api/customers/search             # busqueda + filtros sobre customer_segments
+GET /api/customer/<customer_id>       # ficha completa: comparativas + radar + timeline
+GET /api/cluster/<cluster_id>         # perfil estadistico + top clientes + top productos
+GET /api/cluster/predict              # simulador: feature_vec -> cluster + (pc1,pc2)
+GET /api/cluster/feature_ranges       # rangos (p01..p99) por feature para los sliders
+\end{lstlisting}
+
+\noindent
+La búsqueda admite filtros por \texttt{cluster}, mínimo y máximo de CLTV,
+mínimo y máximo de frecuencia, y orden por CLTV, recencia, frecuencia o
+nombre. El simulador \texttt{/api/cluster/predict} carga los tres
+artefactos \texttt{scaler/pca/kmeans.joblib} en memoria y aplica
+exactamente la misma cadena utilizada en el entrenamiento, de manera que
+las predicciones sobre clientes ficticios sean reproducibles.
+
+\section{Las seis vistas}
+
+La navegación del dashboard se ofrece como un sumario con seis capítulos,
+en línea con la estética editorial del informe. Cada capítulo del
+dashboard corresponde a un módulo bajo
+\texttt{dashboard/html/views/}\,:
+
+\begin{enumerate}
+  \item \textbf{Visión General} (\texttt{overview.py}): KPIs del año,
+        inventario verificado del DWH, evolución diaria con media móvil
+        a $7$ días, mezcla por categoría, \emph{treemap} categoría/marca,
+        estacionalidad y top 10 de tiendas
+        (figura~\ref{fig:dash-overview}).
+  \item \textbf{Clientes} (\texttt{clientes.py}): hallazgo principal
+        (porcentaje de \emph{one-shot}), distribución del CLTV con
+        histograma logarítmico, ECDF y densidad por cluster, curva de
+        Lorenz con coeficiente de Gini, y top $20$ de clientes
+        (figura~\ref{fig:dash-clientes}).
+  \item \textbf{Segmentación} (\texttt{segmentacion.py}): tres tarjetas
+        de cluster con KPI por cabeza, mapa PCA con \emph{hexbin},
+        tamaño de cluster, varianza explicada, \emph{heatmap}
+        $z$-score y simulador interactivo
+        (figura~\ref{fig:dash-segmentacion}).
+  \item \textbf{Productos} (\texttt{productos.py}): KPIs del periodo,
+        top $15$ de productos por ingresos, descomposición de
+        devoluciones por motivo, top productos por valor devuelto
+        (figura~\ref{fig:dash-productos}).
+  \item \textbf{Ficha Cliente} (\texttt{ficha.py}): buscador en vivo
+        sobre $5\,750$ clientes con filtros por cluster, CLTV o
+        frecuencia; al seleccionar, despliega cabecera, comparativas,
+        radar de percentiles e historial de compras leído del DWH
+        (figura~\ref{fig:dash-ficha}).
+  \item \textbf{Metodología} (\texttt{metodologia.py}): mapa de
+        KPI~$\to$~fórmula~$\to$~origen, listado del pipeline ETL, la
+        propia justificación del $k=3$, varianza explicada y estadísticos
+        clave (figura~\ref{fig:dash-metodologia}).
+\end{enumerate}
+
+\section{Capturas de pantalla}
+
+Las capturas de las seis vistas se obtuvieron con el servidor Flask en
+ejecución sobre \texttt{localhost:8001} y exportadas en alta resolución.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dashboard_overview.png}
+  \caption[Dashboard, Visión General]{Dashboard, vista
+  \emph{Visión General}: KPIs del año en curso, inventario verificado del
+  DWH y comienzo de la serie diaria de ingresos.}
+  \label{fig:dash-overview}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dashboard_clientes.png}
+  \caption[Dashboard, Clientes]{Dashboard, vista \emph{Clientes y CLTV}:
+  hallazgo principal (un único \emph{ticket} en el $87\%$ de la base),
+  histograma logarítmico del CLTV, curva de Lorenz con
+  $\text{Gini}=0{,}907$ y comparación mediana--media por cluster.}
+  \label{fig:dash-clientes}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dashboard_segmentacion.png}
+  \caption[Dashboard, Segmentación]{Dashboard, vista
+  \emph{Segmentación}: tarjetas-resumen por cluster, mapa PCA con
+  contornos, justificación del $k=3$, varianza explicada y simulador
+  interactivo del modelo.}
+  \label{fig:dash-segmentacion}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dashboard_productos.png}
+  \caption[Dashboard, Productos]{Dashboard, vista
+  \emph{Productos y devoluciones}: KPIs del periodo, top $15$ por
+  ingresos, distribución por motivo de devolución y mapa de hechos
+  utilizados (\texttt{fact\_sales}, \texttt{fact\_returns},
+  \texttt{dim\_product}, \texttt{dim\_return\_reason}).}
+  \label{fig:dash-productos}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dashboard_ficha.png}
+  \caption[Dashboard, Ficha Cliente]{Dashboard, vista
+  \emph{Ficha Cliente}: buscador en vivo y panel detallado del cliente
+  con radar de percentiles, tabla comparativa contra mediana del cluster
+  y mediana global, e historial de compras agregado por categoría.}
+  \label{fig:dash-ficha}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dashboard_metodologia.png}
+  \caption[Dashboard, Metodología]{Dashboard, vista
+  \emph{Metodología}: pipeline ETL, justificación del $k=3$ por curva del
+  codo, varianza explicada y estadísticos clave del CLTV.}
+  \label{fig:dash-metodologia}
+\end{figure}
+
+\section{Decisiones de diseño}
+
+El dashboard se ha construido siguiendo una estética \emph{editorial} o
+de \emph{data-storytelling} (próxima al estilo de los \emph{longreads} de
+publicaciones como Pudding o Bloomberg) antes que un patrón clásico de
+``rejilla de KPIs''. Las decisiones más relevantes:
+
+\paragraph{Una columna principal con párrafos cortos.}
+Cada gráfico se introduce con una pequeña descripción que orienta la
+lectura, lo que evita que el lector tenga que reconstruir el contexto
+visual por su cuenta.
+
+\paragraph{Paletas de colores reservadas a la rentabilidad.}
+El color de los gráficos no codifica categorías arbitrarias sino
+métricas semánticamente comparables: el margen aparece en rampa
+azul\,$\to$\,verde, la concentración (Lorenz) en azul, y los clusters en
+una terna estable (azul, ámbar, rojo) que se repite en todas las vistas
+de segmentación.
+
+\paragraph{Modo \emph{vivo} vs. \emph{offline} con misma maqueta.}
+El sitio detecta la disponibilidad del DWH al arrancar y conmuta los
+componentes pertinentes sin alterar la maqueta, lo que permite usarlo
+como prototipo de presentación incluso cuando no hay base de datos
+disponible.
+
+\paragraph{Plotly inline + Flask para el detalle.}
+Los gráficos se generan en el servidor mediante \texttt{plotly.io.to\_html}
+y se embeben directamente en \texttt{index.html}, lo que evita
+dependencias en tiempo de carga; los componentes verdaderamente
+interactivos (\emph{ficha de cliente}, \emph{simulador}, \emph{cluster
+detail}) son los que consumen los endpoints REST.

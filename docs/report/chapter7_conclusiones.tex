@@ -1,0 +1,131 @@
+\chapter{Conclusiones}
+\label{ch:conclusiones}
+
+\section{Resumen de hallazgos}
+
+\begin{itemize}
+  \item Sobre $5\,750$ clientes, $20\,000$ tickets y $42\,555$ líneas de
+        venta, el pipeline ETL puebla un DWH en estrella de seis
+        dimensiones y dos hechos completamente reproducible: una sola
+        invocación de \texttt{jupyter nbconvert --execute notebooks/0*}
+        regenera \texttt{dwh}, los \emph{parquet} de analítica y los
+        modelos.
+  \item La distribución del CLTV es extremadamente asimétrica: mediana
+        $0{,}72$\,\texteuro\ frente a media $3\,165$\,\texteuro\ y máximo
+        $109\,735$\,\texteuro. El $87\%$ de los clientes son \emph{one-shot}
+        y el $13\%$ ``alto valor'' concentra el grueso del CLTV agregado.
+        La curva de Lorenz da un coeficiente de Gini $\approx 0{,}91$.
+  \item El segmentador PCA(2) + KMeans(3) recupera tres clusters
+        interpretables (ocasionales, alto valor, devolutivos) con
+        $80{,}3\%$ de varianza explicada por las dos primeras
+        componentes principales y un codo claro en $k^{\star}=3$.
+  \item Los dos hechos quedan referencialmente íntegros: los tests de
+        \texttt{tests/test\_dwh\_integrity.py} verifican que el número de
+        filas en \texttt{fact\_sales} y \texttt{fact\_returns} coincide
+        con el de \texttt{public.sale\_item} y \texttt{public.return\_item},
+        respectivamente, y que los ingresos en \texttt{staging} y en el
+        DWH coinciden tras la corrección de los $8$ subtotales
+        inconsistentes detectados en raw.
+\end{itemize}
+
+\section{Limitaciones}
+
+El dataset es \emph{sintético} y ha sido diseñado para exhibir patrones
+claros, por lo que algunas decisiones de diseño preservan los datos tal
+cual aunque generen artefactos:
+
+\begin{itemize}
+  \item Existen $10$ clientes con $\texttt{return\_rate}>1$ (las
+        devoluciones superan la venta original). El proyecto preserva
+        estas filas sin recortarlas para no falsear el dato fuente; se
+        comunican explícitamente al lector en la vista \emph{Clientes y
+        CLTV} del dashboard.
+  \item $1$ producto carece de \texttt{unit\_cost} por no aparecer en
+        \texttt{central\_product}. El cálculo de \texttt{cost} y
+        \texttt{margin} lo coalesce a $0$ vía \texttt{coalesce(unit\_cost,
+        0)} en la transformación de \texttt{fact\_sales}; los KPIs de
+        rentabilidad lo flaggean en la vista \emph{Productos}.
+  \item La retención $R_t$ es una proxy discreta (meses naturales con
+        actividad dividido por la ventana, $W=72$). En producción tendría
+        sentido una versión continua (\emph{e.g.}, suavizada por
+        \emph{exponential decay}).
+  \item El KMeans se entrena sobre el espacio reducido por PCA(2), lo
+        que facilita la visualización pero descarta el $\sim 20\%$ de la
+        varianza original; subir a $3$--$4$ componentes manteniendo la
+        misma elección de $k$ podría mejorar la separación de los
+        clusters minoritarios.
+\end{itemize}
+
+\section{Líneas futuras}
+
+Manteniendo el alcance de la asignatura, el proyecto admite varias
+extensiones naturales que constituirían un trabajo de continuación:
+
+\begin{itemize}
+  \item \textbf{Más \emph{features}.} Incluir señales territoriales
+        (\texttt{district}, \texttt{area\_type}) y promocionales
+        (\texttt{discount\_percent}, \texttt{offer\_id}) ya disponibles
+        en el DWH.
+  \item \textbf{$k$ mayor con métricas de silueta y Davies--Bouldin.}
+        Validar la partición de manera intrínseca antes de fijar $k$ y
+        comparar contra el codo.
+  \item \textbf{CLTV probabilístico.} Sustituir la fórmula multiplicativa
+        por modelos del tipo BG/NBD\,+\,Gamma--Gamma para estimar la
+        probabilidad de retención y el valor esperado por ticket de cara
+        a horizonte futuro.
+  \item \textbf{Ingestión incremental.} Refactorizar el pipeline para
+        soportar cargas \emph{upsert} en \texttt{staging} y
+        \emph{slowly changing dimensions} en \texttt{dwh}, evitando el
+        \texttt{truncate~\dots~restart identity} actual.
+\end{itemize}
+
+\section{Pruebas}
+\label{sec:pruebas}
+
+La carpeta \texttt{tests/} contiene dos archivos con un total de nueve
+pruebas, ejecutados con \texttt{pytest}. Las pruebas que requieren acceso
+al DWH se saltan automáticamente cuando PostgreSQL no responde, mediante
+un \texttt{pytest.skip} a nivel de módulo en cada \texttt{conftest}-test
+(comprobando \texttt{read\_sql("select 1")}).
+
+\paragraph{\texttt{tests/test\_cltv.py} — lógica de analítica
+($4$ pruebas).}
+\begin{itemize}
+  \item \texttt{test\_cltv\_columns\_present}: el dataframe devuelto por
+        \texttt{compute\_cltv} contiene las ocho columnas obligatorias.
+  \item \texttt{test\_cltv\_formula\_consistency}: el valor almacenado de
+        \texttt{cltv} coincide, fila a fila, con
+        $\text{net\_revenue}\cdot\text{margin\_rate}\cdot\text{frequency}\cdot\text{retention\_rate}$
+        sobre las primeras $50$ filas.
+  \item \texttt{test\_metrics\_aov\_matches\_revenue\_div\_frequency}: el
+        AOV calculado es exactamente $\text{net\_revenue}/\text{frequency}$
+        para los clientes con frecuencia positiva.
+  \item \texttt{test\_recency\_is\_non\_negative}: la recencia (días
+        hasta la última compra) no es nunca negativa.
+\end{itemize}
+
+\paragraph{\texttt{tests/test\_dwh\_integrity.py} — integridad del DWH
+($5$ pruebas).}
+\begin{itemize}
+  \item \texttt{test\_fact\_sales\_matches\_raw\_sale\_item\_count}: el
+        número de filas en \texttt{dwh.fact\_sales} es igual al de
+        \texttt{public.sale\_item}.
+  \item \texttt{test\_fact\_returns\_matches\_raw\_return\_item\_count}:
+        análogo para devoluciones.
+  \item \texttt{test\_dim\_customer\_unique\_business\_key}: no hay
+        \texttt{customer\_id} duplicado en \texttt{dim\_customer}.
+  \item \texttt{test\_no\_dangling\_dim\_date\_in\_facts}: cada
+        \texttt{sale\_date\_id} de \texttt{fact\_sales} tiene una entrada
+        viva en \texttt{dim\_date}.
+  \item \texttt{test\_revenue\_matches\_between\_staging\_and\_dwh}: la
+        suma de \texttt{subtotal} en \texttt{staging.sale\_item} y
+        \texttt{dwh.fact\_sales} coincide (a $0{,}01$\,\texteuro), con lo
+        que la corrección de los $8$ subtotales inconsistentes en raw
+        no rompe la conservación de ingresos.
+\end{itemize}
+
+\noindent En conjunto, estas pruebas funcionan como red de seguridad
+mínima: detectan tanto regresiones algebraicas en el cálculo del CLTV
+como roturas estructurales del DWH (datos huérfanos, duplicados o
+desalineados respecto al raw). El listado completo aparece en el
+apéndice~\ref{ap:tests}.

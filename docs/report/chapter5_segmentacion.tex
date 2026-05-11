@@ -1,0 +1,237 @@
+\chapter{Segmentación de clientes: PCA + KMeans}
+\label{ch:segmentacion}
+
+\section{Panel de \emph{features}}
+
+La segmentación parte de un panel a nivel cliente con ocho \emph{features}
+(tabla~\ref{tab:features-cluster}). Las cinco primeras se calculan en el
+notebook~03 (\texttt{cltv.parquet}); las tres siguientes en el notebook~04
+(\texttt{customer\_metrics.parquet}); el CLTV se reincorpora como octava
+\emph{feature} para que la varianza explicada por las primeras componentes
+principales recoja explícitamente el eje de valor.
+
+\begin{table}[H]
+\centering
+\caption{Las ocho \emph{features} usadas en el clustering.}
+\label{tab:features-cluster}
+\small
+\begin{tabular}{l p{8.8cm}}
+\toprule
+\textbf{Variable} & \textbf{Origen / definición} \\
+\midrule
+\texttt{net\_revenue}     & Ingresos netos del cliente (\texteuro).        \\
+\texttt{margin\_rate}     & Margen como proporción.                       \\
+\texttt{frequency}        & Número de tickets distintos.                  \\
+\texttt{retention\_rate}  & Meses activos $/\,72$.                        \\
+\texttt{aov}              & Ticket medio = ingresos netos / frecuencia.   \\
+\texttt{recency\_days}    & Días desde la última compra al corte.         \\
+\texttt{return\_rate}     & Tasa de devolución sobre ingresos brutos.     \\
+\texttt{cltv}             & CLTV calculado en el capítulo~\ref{ch:cltv}.  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Estandarización, PCA y KMeans}
+
+El pipeline analítico es la composición canónica:
+
+\[
+  X \;\longrightarrow\;
+  \underbrace{Z = \text{StandardScaler}(X)}_{\text{media }0,\text{ var. }1}
+  \;\longrightarrow\;
+  \underbrace{Y = \text{PCA}_{n=2}(Z)}_{\text{ejes ortogonales de máx. varianza}}
+  \;\longrightarrow\;
+  \underbrace{\text{KMeans}_{k=3}(Y)}_{\text{asignación de cluster}}.
+\]
+
+\subsection{Fundamento matemático del PCA}
+
+Sea $Z\in\mathbb{R}^{n\times p}$ la matriz de \emph{features}
+estandarizadas. Su matriz de covarianza muestral es
+$S=\tfrac{1}{n-1}Z^{\top}Z\in\mathbb{R}^{p\times p}$. El PCA busca las
+direcciones $w\in\mathbb{R}^{p}$, $\|w\|_2=1$, que maximizan la varianza
+proyectada:
+
+\begin{align}
+  w_1 \;=\; \argmax_{\|w\|=1}\;\operatorname{Var}(Z w)
+       \;=\; \argmax_{\|w\|=1}\;w^{\top}S\,w.
+  \label{eq:pca-max}
+\end{align}
+
+\noindent La condición de Karush--Kuhn--Tucker (KKT) sobre el lagrangiano
+$L(w,\lambda) = w^{\top}Sw - \lambda(w^{\top}w-1)$ da
+$Sw_1 = \lambda_1 w_1$: las direcciones óptimas son los \emph{vectores
+propios} de $S$ asociados a sus mayores \emph{valores propios}. En el
+proyecto se usan los dos primeros, $w_1$ y $w_2$, que constituyen los ejes
+\texttt{pc1} y \texttt{pc2} del fichero \texttt{customer\_segments.parquet}.
+
+La varianza explicada por la componente $i$-ésima es
+$\lambda_i / \sum_j \lambda_j$. Leyendo el atributo
+\texttt{explained\_variance\_ratio\_} del objeto
+\texttt{models/pca.joblib}:
+
+\begin{align}
+  \lambda_1/\textstyle\sum = 0{,}571,\qquad
+  \lambda_2/\textstyle\sum = 0{,}232,\qquad
+  \lambda_1/\textstyle\sum + \lambda_2/\textstyle\sum \approx 0{,}803.
+\end{align}
+
+\noindent Las dos primeras componentes recogen un $80{,}3\%$ de la
+varianza total, suficiente para una visualización útil
+(figura~\ref{fig:pca-clusters}) aun reconociendo que el restante $19{,}7\%$
+quedaría capturado al ampliar a $3$--$4$ componentes para análisis
+puramente cuantitativos.
+
+\subsection{Fundamento matemático del KMeans}
+
+KMeans busca una partición $\{C_1,\dots,C_k\}$ del espacio de puntos
+$\{y_i\}_{i=1}^n\subset\mathbb{R}^{n_{\text{comp}}}$ que minimice la
+\emph{inercia} o suma de distancias cuadráticas intra-cluster:
+
+\begin{align}
+  J(C_1,\dots,C_k)
+  \;=\;
+  \sum_{i=1}^{k}\;\sum_{y\in C_i}\;\bigl\| y - \mu_i\bigr\|_2^{2},
+  \qquad
+  \mu_i \;=\; \tfrac{1}{|C_i|}\sum_{y\in C_i} y.
+  \label{eq:kmeans-inertia}
+\end{align}
+
+\noindent El algoritmo de Lloyd alterna dos pasos hasta la convergencia:
+(i) asignar cada punto a su centroide más cercano y (ii) recalcular los
+centroides como la media de los puntos asignados. En la implementación
+del proyecto se aplica \texttt{KMeans} sobre los puntos en el espacio
+$Y\in\mathbb{R}^{n\times 2}$ (es decir, ya proyectados por PCA), no en el
+espacio estandarizado original. Esta decisión hace que la elección de $k$
+y las distancias del simulador del dashboard (capítulo~\ref{ch:dashboard})
+sean directamente interpretables sobre el scatter.
+
+\subsection{Elección de $k$ por curva del codo}
+
+La curva del codo, $k\mapsto J^{\star}(k)$ sobre $\{2,\dots,8\}$,
+(figura~\ref{fig:elbow}) muestra el salto característico: la inercia
+cae de $13\,360$ ($k=2$) a $2\,934$ ($k=3$), y a partir de ahí desciende
+suavemente. Se fija $k^{\star}=3$, valor que además admite una lectura de
+negocio limpia (subapartado~\ref{sec:perfiles-cluster}).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\linewidth]{elbow.png}
+  \caption[Curva del codo del KMeans]{%
+    Inercia intra-cluster $J^{\star}(k)$ frente a $k\in\{2,\dots,8\}$;
+    el codo en $k^{\star}=3$ justifica la elección final.}
+  \label{fig:elbow}
+\end{figure}
+
+\section{Implementación}
+
+El módulo \texttt{src/analytics/clustering.py} encapsula el pipeline en
+una única función \texttt{run\_pca\_kmeans} y un \emph{dataclass}
+\texttt{ClusteringResult} con todos los artefactos derivados. El listado
+completo aparece en el apéndice~\ref{ap:python}; aquí se reproducen el
+\emph{dataclass} y la función principal:
+
+\begin{lstlisting}[language=Python,
+  caption={Extracto de \texttt{src/analytics/clustering.py}: \emph{dataclass}
+  y pipeline.},
+  label={lst:clustering-extracto}]
+@dataclass
+class ClusteringResult:
+    df: pd.DataFrame                  # df + columnas pc1, pc2, cluster
+    pca: PCA
+    scaler: StandardScaler
+    kmeans: KMeans
+    explained_variance: np.ndarray
+    inertia_curve: dict[int, float]   # k -> inertia, para escoger k
+
+
+def run_pca_kmeans(df, feature_cols, n_clusters=3, n_components=2,
+                   random_state=42):
+    X = df[feature_cols].astype(float).fillna(0).to_numpy()
+    scaler = StandardScaler().fit(X)
+    Xs = scaler.transform(X)
+    pca = PCA(n_components=n_components, random_state=random_state).fit(Xs)
+    Xp = pca.transform(Xs)
+    inertia = _elbow(Xp, random_state=random_state)
+    km = KMeans(n_clusters=n_clusters, n_init=10, random_state=random_state).fit(Xp)
+    out = df.copy()
+    for i in range(n_components):
+        out[f"pc{i+1}"] = Xp[:, i]
+    out["cluster"] = km.labels_
+    return ClusteringResult(out, pca, scaler, km,
+                            pca.explained_variance_ratio_, inertia)
+\end{lstlisting}
+
+La función \texttt{save\_artifacts(result, out\_dir)} persiste el
+\texttt{scaler}, el \texttt{PCA}, el \texttt{KMeans} y el dataframe
+resultante en \texttt{models/}. Estos cuatro artefactos son los que
+consume el dashboard en vivo: el simulador
+\texttt{/api/cluster/predict} reutiliza exactamente esa pipeline para
+asignar cluster a un cliente ficticio
+(capítulo~\ref{ch:dashboard}).
+
+\section{Resultado: perfiles de los clusters}
+\label{sec:perfiles-cluster}
+
+La figura~\ref{fig:pca-clusters} muestra el resultado final: la
+proyección de los $5\,750$ clientes sobre el plano \texttt{pc1}--\texttt{pc2}
+coloreada por el cluster asignado. La tabla~\ref{tab:cluster-perfil}
+resume el perfil mediano de cada cluster sobre las ocho \emph{features}
+originales, leído directamente de \texttt{customer\_segments.parquet}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\linewidth]{pca_clusters.png}
+  \caption[Scatter PC1--PC2 con clusters]{%
+    Proyección \texttt{pc1}--\texttt{pc2} con asignación de KMeans.
+    PC1 ordena los clientes por valor combinado de ingresos, frecuencia y
+    CLTV; PC2 separa el cluster ``devolutivo'' del resto.}
+  \label{fig:pca-clusters}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{Perfil mediano de cada cluster sobre las ocho \emph{features}
+de entrada y tamaño del cluster.}
+\label{tab:cluster-perfil}
+\small
+\begin{tabular}{l r r r r r r r r r}
+\toprule
+\textbf{Cluster} &
+\textbf{$n$} &
+\texttt{net\_rev.} &
+\texttt{margin} &
+\texttt{freq.} &
+\texttt{ret.} &
+\texttt{aov} &
+\texttt{recency} &
+\texttt{ret\_rate} &
+\textbf{CLTV} \\
+\midrule
+0 (\emph{ocasional})    & $4\,576$ & $129{,}90$    & $0{,}400$ & $1$  & $0{,}014$ & $129{,}90$  & $854$ & $0{,}000$ & $0{,}72$        \\
+1 (\emph{alto valor})   & $740$    & $11\,461{,}53$ & $0{,}388$ & $20$ & $0{,}250$ & $572{,}24$  & $82$  & $0{,}022$ & $21\,191{,}30$ \\
+2 (\emph{devolutivo})   & $434$    & $0{,}00$       & $0{,}000$ & $1$  & $0{,}014$ & $0{,}00$    & $856$ & $1{,}000$ & $0{,}00$        \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Lectura de los clusters.}
+
+\begin{itemize}
+  \item \textbf{Cluster 0 — \emph{ocasionales} ($n=4\,576$, $\approx 80\%$
+        de la base).} Clientes \emph{one-shot}: una sola compra, ticket
+        medio en torno a $130$\,\texteuro, recencia mediana de $854$\,d
+        (más de dos años). Aportan poco CLTV individual pero forman la
+        base demográfica del dataset.
+  \item \textbf{Cluster 1 — \emph{alto valor / recurrentes} ($n=740$,
+        $\approx 13\%$).} Clientes activos: $20$ tickets mediana,
+        $11\,461$\,\texteuro\ de ingresos netos, AOV $572$\,\texteuro,
+        recencia mediana de $82$ días y retención del $25\%$ ($18/72$
+        meses activos). Concentran el grueso del CLTV agregado.
+  \item \textbf{Cluster 2 — \emph{devolutivos} ($n=434$, $\approx 7{,}5\%$).}
+        Tasa de devolución mediana del $100\%$ (la mediana del subgrupo
+        devuelve todo lo que compra) e ingresos netos medianos nulos. Es
+        el grupo separado por la PC2 y es \emph{ruido} desde el punto de
+        vista de valor: clientes que no aportan margen y no permiten
+        proyectar CLTV.
+\end{itemize}
