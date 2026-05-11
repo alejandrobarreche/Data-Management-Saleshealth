@@ -48,3 +48,7 @@ docs/report/*.fdb_latexmk
 docs/report/*.fls
 docs/report/*.synctex.gz
 docs/report/main.pdf
+
+.claude/
+
+CLAUDE.md
