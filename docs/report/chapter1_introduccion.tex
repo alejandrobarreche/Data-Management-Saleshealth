@@ -1,107 +1,39 @@
-\chapter{Introducción}
-\label{ch:intro}
+\section{Introducción}
+\label{sec:intro}
 
-\section{Contexto}
-
-El proyecto \textbf{SalesHealth} parte de un \emph{dataset sintético} del
-sector salud y bienestar, distribuido como punto de partida para la
-entrega final de la asignatura. El conjunto reproduce el escenario habitual
-de una pequeña cadena retail: $50$ productos repartidos en categorías como
-\emph{wellness}, \emph{diagnóstico} o \emph{rehabilitación}; una red de
-tiendas físicas situadas en distintos barrios; un catálogo de promociones y
-un flujo de devoluciones con motivo asociado.
-
-El dataset cubre una ventana temporal de seis años naturales, $2020$ a
-$2025$ inclusive, ambos con datos hasta finales de diciembre, lo que
-equivale a $72$ meses de actividad. Los datos crudos llegan ya cargados en
-el esquema \texttt{public} de una instancia local de PostgreSQL~16
-desplegada en Docker y escuchando en \texttt{localhost:5433}.
-
-\section{Cifras clave del dataset}
-
-Las cifras siguientes se han verificado contra el DWH y los artefactos
-\texttt{.parquet} generados por el pipeline (notebooks~02 a~05). Aparecen
-recurrentemente a lo largo del informe.
+El proyecto parte de un dataset sintético del sector salud y bienestar
+distribuido como punto de partida para la entrega final. Reproduce un
+escenario retail clásico ($50$ productos, una red de tiendas, catálogo de
+promociones, devoluciones con motivo) sobre una ventana de $72$ meses
+($2020$--$2025$, ambos inclusive). Los datos crudos están cargados en el
+esquema \texttt{public} de PostgreSQL~16 en Docker (\texttt{localhost:5433},
+BD \texttt{saleshealth}). La tabla~\ref{tab:cifras-clave} reúne las cifras
+verificadas contra el DWH y los \emph{parquet} de analítica.
 
 \begin{table}[H]
 \centering
-\caption{Cifras clave del dataset SalesHealth (valores verificados sobre el
-DWH y \texttt{data/processed/cltv.parquet}).}
+\caption{Cifras clave verificadas (DWH + \texttt{data/processed/}).}
 \label{tab:cifras-clave}
 \small
-\begin{tabular}{lrl}
+\begin{tabular}{lr@{\hspace{1.4em}}lr}
 \toprule
-\textbf{Magnitud} & \textbf{Valor} & \textbf{Comentario} \\
-\midrule
-Productos              & $50$            & catálogo \texttt{dim\_product}        \\
-Clientes               & $5\,750$        & \texttt{dim\_customer}                \\
-Tickets de venta       & $20\,000$       & sumatorio de \texttt{frequency}       \\
-Líneas de venta        & $42\,555$       & granularidad de \texttt{fact\_sales}  \\
-Líneas devueltas       & $2\,330$        & \texttt{fact\_returns}                \\
-Ventana temporal       & 2020-01 \,$\to$\, 2026-01 & $72$ meses contables      \\
-Ingresos brutos        & $9{,}68$\,M\texteuro & \texttt{sum(gross\_revenue)}     \\
-Ingresos netos         & $9{,}40$\,M\texteuro & gross $-$ \texttt{returned\_value} \\
+Productos          & $50$            & Líneas de venta   & $42\,555$       \\
+Clientes           & $5\,750$        & Líneas devueltas  & $2\,330$        \\
+Tickets de venta   & $20\,000$       & Ingresos brutos   & $9{,}68$\,M\texteuro \\
+Ingresos netos     & $9{,}40$\,M\texteuro & Ventana          & $72$ meses    \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\section{Objetivos del proyecto}
+\noindent\textbf{Objetivos.} (i) Diseñar un modelo Entidad--Relación sobre
+\texttt{public} y un modelo dimensional en estrella sobre \texttt{dwh}.
+(ii) Implementar un ETL reproducible \texttt{public$\to$staging$\to$dwh}.
+(iii) Calcular el CLTV por cliente,
+$\mathrm{CLTV}=\text{Ingresos}_t \times \text{Margen}_t \times
+\text{Frecuencia}_t \times R_t$, junto con \emph{Recencia}, \emph{AOV} y
+\emph{tasa de devolución}. (iv) Segmentar la base mediante \emph{PCA} +
+\emph{KMeans}. (v) Documentar todo en un informe y un dashboard.
 
-Los objetivos del enunciado se mapean a los capítulos siguientes:
-
-\begin{enumerate}
-  \item Diseñar un \textbf{modelo Entidad--Relación} sobre el esquema
-        \texttt{public} y un \textbf{modelo dimensional} en estrella sobre
-        \texttt{dwh} (capítulo~\ref{ch:modelo}).
-  \item Implementar un \textbf{ETL} reproducible desde los datos crudos
-        hasta el DWH, pasando por un área intermedia \texttt{staging}
-        (capítulo~\ref{ch:etl}).
-  \item Calcular el \textbf{CLTV} por cliente, según la fórmula
-        $\mathrm{CLTV} = \text{Ingresos}_t \times \text{Margen}_t \times
-        \text{Frecuencia}_t \times R_t$, junto con dos métricas
-        adicionales: \emph{Recencia} y \emph{AOV}, así como la tasa
-        de devolución (capítulo~\ref{ch:cltv}).
-  \item Aplicar \textbf{PCA + KMeans} sobre las métricas anteriores para
-        \textbf{segmentar} la base de clientes
-        (capítulo~\ref{ch:segmentacion}).
-  \item Documentar todo en este \textbf{informe técnico} y exponer los
-        resultados en un \textbf{dashboard} interactivo
-        (capítulo~\ref{ch:dashboard}).
-\end{enumerate}
-
-\section{Stack tecnológico}
-
-El proyecto está implementado con un stack deliberadamente clásico y
-reproducible, evitando orquestadores externos:
-
-\begin{itemize}
-  \item \textbf{Python 3.11+}, gestionado mediante un entorno \texttt{conda}
-        denominado \texttt{UAX}. Todos los comandos del repositorio se
-        invocan como \texttt{conda run -n UAX <comando>}.
-  \item \textbf{PostgreSQL 16} sobre Docker, accesible en
-        \texttt{localhost:5433} y base de datos \texttt{saleshealth}, con
-        tres esquemas: \texttt{public} (raw), \texttt{staging} (limpio) y
-        \texttt{dwh} (estrella).
-  \item Bibliotecas: \texttt{pandas}, \texttt{SQLAlchemy} 2.0,
-        \texttt{psycopg2}, \texttt{scikit-learn}, \texttt{joblib},
-        \texttt{matplotlib} y \texttt{pyarrow}.
-  \item \textbf{Notebooks Jupyter} numerados como orquestador del pipeline
-        (sin Airflow, Prefect ni Dagster).
-  \item \textbf{Flask} como servidor del dashboard, con vistas HTML
-        estáticas generadas a partir de plantillas Python que embeben
-        gráficos de \texttt{Plotly.js}.
-  \item \texttt{pytest} para las pruebas y \texttt{ruff} para el linting.
-\end{itemize}
-
-\section{Organización del informe}
-
-El cuerpo del informe sigue la cadena lógica del proyecto. El
-capítulo~\ref{ch:modelo} presenta el modelo de datos crudo y el
-modelo dimensional resultante. El capítulo~\ref{ch:etl} describe el ETL
-que conecta ambos. El capítulo~\ref{ch:cltv} formaliza el cálculo del CLTV
-y las métricas adicionales. El capítulo~\ref{ch:segmentacion} detalla la
-segmentación PCA + KMeans con su justificación matemática. El
-capítulo~\ref{ch:dashboard} describe el dashboard y sus endpoints. El
-capítulo~\ref{ch:conclusiones} resume hallazgos, limitaciones y líneas
-futuras. El apéndice recoge listados completos del DDL del DWH, del código
-de analítica y del manifiesto de tests.
+\noindent\textbf{Stack.} Python~3.11 en entorno \texttt{conda} \texttt{UAX};
+PostgreSQL~16; \texttt{pandas}, \texttt{SQLAlchemy}~2.0, \texttt{scikit-learn};
+notebooks Jupyter como orquestador; Flask para el dashboard; \texttt{pytest}.

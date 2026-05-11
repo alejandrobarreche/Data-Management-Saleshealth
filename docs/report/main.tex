@@ -3,14 +3,29 @@
 %
 % Compilación:
 %   latexmk -pdf -interaction=nonstopmode main.tex
-% o, alternativamente:
-%   pdflatex -interaction=nonstopmode main.tex (dos pasadas)
+% o, dos pasadas de pdflatex.
 %
-% No hay bibliografía: el informe se sostiene sobre el código y los datos
-% del propio repositorio. No requiere biber.
+% No hay bibliografía. El informe se sostiene sobre el código del repositorio.
 
-\documentclass[11pt, a4paper, oneside]{report}
+\documentclass[11pt, a4paper, oneside]{article}
 \usepackage{projectreport}
+
+% --- Aire tipográfico (legibilidad sobre densidad) ---------------------------
+\setlength{\parskip}{6pt plus 1pt}            % separación entre párrafos
+\setlength{\parindent}{0pt}                   % sangría desactivada (estilo informe técnico)
+\renewcommand{\baselinestretch}{1.15}         % interlineado holgado
+
+% Estilo de secciones más respirado
+\usepackage{titlesec}
+\titlespacing*{\section}{0pt}{1.6em}{0.9em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.6em}
+\titleformat{\section}
+  {\normalfont\large\bfseries}{\thesection}{0.7em}{}
+\titleformat{\subsection}
+  {\normalfont\normalsize\bfseries\itshape}{\thesubsection}{0.6em}{}
+
+% Captions más respirados
+\captionsetup{font=small, labelfont=bf, skip=6pt, belowskip=4pt}
 
 % --- Metadatos del informe ---------------------------------------------------
 \renewcommand{\name}{Alejandro Barreche}
@@ -27,40 +42,24 @@
 \makecoverpage
 
 % --------------------------------------------------------- Resumen / abstract
-\chapter*{Resumen}
-\addcontentsline{toc}{chapter}{Resumen}
-\thispagestyle{plain}
+\section*{Resumen}
 
-Este informe documenta el proyecto \textbf{SalesHealth}, entrega final de la
-asignatura Gestión de Datos del curso 2025/26 en la Universidad Alfonso X El
-Sabio. Sobre un dataset relacional sintético del sector salud y bienestar
-($5\,750$ clientes, $20\,000$ tickets de venta, $42\,555$ líneas, $2\,330$
-devoluciones, ventana 2020-01--2026-01) se construye un \emph{Data Warehouse}
-con esquema en estrella sobre PostgreSQL, se calcula el \emph{Customer
-Lifetime Value} (CLTV) por cliente según la fórmula del enunciado
-$\mathrm{CLTV} = \text{Ingresos}_t \times \text{Margen}_t \times
-\text{Frecuencia}_t \times R_t$, y se segmenta la base mediante PCA y KMeans
-sobre ocho métricas derivadas. La cadena ETL queda automatizada por seis
-notebooks numerados y por SQL idempotente; los resultados se consumen desde
-un dashboard estático HTML+Plotly servido por Flask. El proyecto incluye una
-batería de pruebas \texttt{pytest} para la integridad referencial del DWH y
-para la consistencia de la fórmula de CLTV.
+Este informe documenta \textbf{SalesHealth}, entrega final de la asignatura
+Gestión de Datos (UAX, curso 2025/26). Sobre un dataset relacional sintético
+del sector salud y bienestar ($5\,750$ clientes, $20\,000$ tickets, $42\,555$
+líneas, $2\,330$ devoluciones, ventana 2020-01--2026-01) se construye un
+\emph{Data Warehouse} en estrella sobre PostgreSQL, se calcula el CLTV por
+cliente y se segmenta la base mediante PCA y KMeans. El ETL queda
+automatizado por seis notebooks numerados, con cobertura de \texttt{pytest}
+sobre la integridad referencial del DWH y la consistencia de la fórmula
+de CLTV.
 
-
-% --------------------------------------------------------------- Índices ----
-\tableofcontents
-
-% --------------------------------------------------------------- Capítulos --
-\include{chapter1_introduccion}
-\include{chapter2_modelo_datos}
-\include{chapter3_etl}
-\include{chapter4_cltv_metricas}
-\include{chapter5_segmentacion}
-\include{chapter6_dashboard}
-\include{chapter7_conclusiones}
-
-% --------------------------------------------------------------- Apéndice ---
-\appendix
-\include{appendix}
+% --------------------------------------------------------------- Secciones --
+\input{chapter1_introduccion}
+\input{chapter2_modelo_datos}
+\input{chapter3_etl}
+\input{chapter4_cltv_metricas}
+\input{chapter5_segmentacion}
+\input{chapter7_conclusiones}
 
 \end{document}

@@ -38,6 +38,13 @@
 \usepackage{setspace}
 \onehalfspacing
 
+% Evita overfull hbox cuando hay listas largas de \texttt con underscores
+% que TeX no puede partir: damos margen interpalabra y modo "sloppy" global.
+\setlength{\emergencystretch}{3em}
+\sloppy
+\hbadness=10000               % silencia los avisos de cajas casi-perfectas
+\hfuzz=2pt                    % tolera 2pt de exceso silenciosamente
+
 % --- Cabeceras y pies ---------------------------------------------------------
 \usepackage{fancyhdr}
 \pagestyle{fancy}
@@ -121,7 +128,13 @@
 \newtheoremstyle{infmstyle}%
   {0.6em}{0.6em}{\normalfont}{}{\bfseries}{.}{ }{}
 \theoremstyle{infmstyle}
-\newtheorem{definicion}{Definición}[chapter]
+% Si el documento es `article`, no existe el contador `chapter`; numeramos
+% los teoremas por sección. Si es `report` o `book`, usamos `chapter`.
+\@ifundefined{chapter}{%
+  \newtheorem{definicion}{Definición}[section]%
+}{%
+  \newtheorem{definicion}{Definición}[chapter]%
+}
 \newtheorem{proposicion}[definicion]{Proposición}
 \newtheorem*{observacion}{Observación}
 
